@@ -122,15 +122,15 @@ def generate_launch_description():
     )
     ld.add_action(static_transform_world_to_imu)
 
-    body_to_rslidar_head_tf = Node(
+    imu_to_rslidar_head_tf = Node(
         package='tf2_ros',
         executable='static_transform_publisher',
-        name='body_to_rslidar_head_tf',
+        name='imu_to_rslidar_head_tf',
         parameters=[{'use_sim_time': DEFAULT_USE_SIM_TIME}],
         arguments=['0.0', '0', '0.0', '0', '0.0', '0', ns_imu_frame, 'rslidar_head'],
         output='screen'
     )
-    ld.add_action(body_to_rslidar_head_tf)
+    ld.add_action(imu_to_rslidar_head_tf)
 
     # rslidar_head -> base_link (机器人基坐标系到雷达坐标系的静态变换)
     rslidar_head_to_base_link_tf = Node(

@@ -864,12 +864,17 @@ void ROSWrapper::pub_odom(const NavState& state){
     footprint_transform.transform.translation.y = state.p[1];
     footprint_transform.transform.translation.z = state.p[2];
     
-    double qx = temp_q.x();
-    double qy = temp_q.y();
-    double qz = temp_q.z();
-    double qw = temp_q.w();
+    M3 R_axis_align;
+    switch(g_ref_gravity_axis) {
+      case 0:  R_axis_align << 0, 0, 1,  0, 1, 0, -1, 0, 0; break;
+      case 1:  R_axis_align << 1, 0, 0,  0, 0, 1,  0, -1, 0; break;
+      case 2:  
+      default: R_axis_align = M3::Identity(); break;
+    }
     
-    double yaw = std::atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz));
+    M3 R_aligned = R_axis_align * state.R.R_;
+    
+    double yaw = std::atan2(R_aligned(1, 0), R_aligned(0, 0));
     double cos_yaw_half = std::cos(yaw * 0.5);
     double sin_yaw_half = std::sin(yaw * 0.5);
     

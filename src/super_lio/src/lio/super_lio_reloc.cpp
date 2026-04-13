@@ -99,7 +99,11 @@ bool SuperLIOReLoc::map_init(){
   static bool pcd_loaded = false;
   if(pcd_loaded) return true;
 
-  std::string map_name = g_save_map_dir + "/" + g_map_name;
+  std::string map_dir = g_save_map_dir;
+  if (!map_dir.empty() && map_dir[0] != '/') {
+    map_dir = g_root_dir + map_dir;
+  }
+  std::string map_name = map_dir + "/" + g_map_name;
   if(pcl::io::loadPCDFile<PointType>(map_name, *point_map_) == -1){
     LOG(ERROR) << RED << " ---> Load map failed. File: " << map_name << RESET;
     return false;
@@ -306,25 +310,39 @@ void SuperLIOReLoc::Output() {
   transformation.block<3, 1>(0, 3) = state.p.cast<float>();
 
   CloudPtr world_pc(new PointCloudType());
+  CloudPtr body_pc(new PointCloudType());
   
   if(g_visual_map){
     static int count = -1;
     count++;
-    if(count % g_pub_step != 0){
-      return;
+    if(count % g_pub_step == 0){
+      count = 0;
+      if(g_visual_dense){
+        pcl::transformPointCloud(*scan_undistort_full_, *world_pc, transformation);
+        data_wrapper_->pub_cloud_world(world_pc, state.timestamp);
+      }else{
+        pcl::transformPointCloud(*ds_undistort_, *world_pc, transformation);
+        data_wrapper_->pub_cloud_world(world_pc, state.timestamp);
+      }
     }
-    count = 0;
-    if(g_visual_dense){
-      pcl::transformPointCloud(*scan_undistort_full_, *world_pc, transformation);
-      data_wrapper_->pub_cloud_world(world_pc, state.timestamp);
-    }else{
-      pcl::transformPointCloud(*ds_undistort_, *world_pc, transformation);
-      data_wrapper_->pub_cloud_world(world_pc, state.timestamp);
+  }
+
+  if(g_visual_map_body){
+    static int count_body = -1;
+    count_body++;
+    if(count_body % g_pub_step == 0){
+      count_body = 0;
+      if(g_visual_dense_body){
+        *body_pc = *scan_undistort_full_;
+        data_wrapper_->pub_cloud_body(body_pc, state.timestamp);
+      }else{
+        *body_pc = *ds_undistort_;
+        data_wrapper_->pub_cloud_body(body_pc, state.timestamp);
+      }
     }
   }
 
 }
-
 
 
 } // namespace END.

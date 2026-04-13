@@ -1,6 +1,7 @@
 
 #include "ros/ROSWrapper.h"
 #include "geometry_msgs/msg/pose_with_covariance_stamped.hpp"
+#include "lio/super_lio.h"
 
 
 using namespace BASIC;
@@ -23,7 +24,7 @@ void LoadParamFromRos(rclcpp::Node& node)
 
   node.declare_parameter<std::string>("lio.map.save_map_dir", "");
   node.get_parameter("lio.map.save_map_dir", g_save_map_dir);
-  g_save_map_dir = g_root_dir + g_save_map_dir;
+  // g_save_map_dir = g_root_dir + g_save_map_dir;
 
   node.declare_parameter<std::string>("lio.map.map_name", "default");
   node.get_parameter("lio.map.map_name", g_map_name);
@@ -171,8 +172,38 @@ void LoadParamFromRos(rclcpp::Node& node)
   node.declare_parameter<bool>("lio.output.dense", false);
   node.get_parameter("lio.output.dense", g_visual_dense);
 
+  node.declare_parameter<bool>("lio.output.map_body", false);
+  node.get_parameter("lio.output.map_body", g_visual_map_body);
+
+  node.declare_parameter<bool>("lio.output.dense_body", false);
+  node.get_parameter("lio.output.dense_body", g_visual_dense_body);
+
   node.declare_parameter<int>("lio.output.pub_step", 0);
   node.get_parameter("lio.output.pub_step", g_pub_step);
+
+  node.declare_parameter<bool>("lio.output.footprint_pub_en", true);
+  node.get_parameter("lio.output.footprint_pub_en", g_footprint_pub_en);
+
+  node.declare_parameter<std::string>("lio.output.tf_base_footprint_frame", "base_footprint");
+  node.get_parameter("lio.output.tf_base_footprint_frame", g_tf_base_footprint_frame);
+
+  node.declare_parameter<std::string>("lio.output.world_frame", "world");
+  node.get_parameter("lio.output.world_frame", g_world_frame);
+
+  node.declare_parameter<std::string>("lio.output.imu_frame", "imu");
+  node.get_parameter("lio.output.imu_frame", g_imu_frame);
+
+  LOG(INFO) << GREEN << " ---> [Param] output/footprint_pub_en: "
+            << (g_footprint_pub_en ? "true" : "false") << RESET;
+
+  LOG(INFO) << GREEN << " ---> [Param] output/tf_base_footprint_frame: "
+            << g_tf_base_footprint_frame << RESET;
+
+  LOG(INFO) << GREEN << " ---> [Param] output/world_frame: "
+            << g_world_frame << RESET;
+
+  LOG(INFO) << GREEN << " ---> [Param] output/imu_frame: "
+            << g_imu_frame << RESET;
 
   // ================= relocation =================
   node.declare_parameter<bool>("lio.relocation.update_map", false);
@@ -277,10 +308,22 @@ ROSWrapper::ROSWrapper(const rclcpp::NodeOptions& options)
   LOG(INFO) << GREEN << " ---> Using Lidar type: "
             << lidarTypeToString(g_lidar_type) << RESET;
 
-  msg2uav_.header.frame_id = "world";
-  path_.header.frame_id = "world";
+  msg2uav_.header.frame_id = g_world_frame;
+  path_.header.frame_id = g_world_frame;
 
   setupIO();
+  setupServices();
+}
+
+
+void ROSWrapper::setupServices(){
+  // 创建保存地图服务
+  save_map_service_ = this->create_service<std_srvs::srv::Trigger>(
+      "/map_save",
+      std::bind(&ROSWrapper::saveMapServiceCallback, this, 
+                std::placeholders::_1, std::placeholders::_2));
+  
+  LOG(INFO) << GREEN << " ---> [Service] Save map service created: /map_save" << RESET;
 }
 
 
@@ -324,20 +367,20 @@ void ROSWrapper::setupIO(){
 
   /// output ======================================
   pub_odom_ = this->create_publisher<nav_msgs::msg::Odometry>(
-      "/lio/odom", 100);
+      "lio/odom", 100);
 
   pub_imu_odom_ = this->create_publisher<nav_msgs::msg::Odometry>(
-      "/lio/imu/odom", 10);
+      "lio/imu/odom", 10);
 
   pub_robo_odom_ = this->create_publisher<nav_msgs::msg::Odometry>(
-      "/lio/robo/odom", 10);
+      "lio/robo/odom", 10);
 
   pub_path_ = this->create_publisher<nav_msgs::msg::Path>(
-      "/lio/path", 10);
+      "lio/path", 10);
 
   pub_cloud_world_ =
     this->create_publisher<sensor_msgs::msg::PointCloud2>(
-        "/lio/cloud_world", 10);
+        "lio/cloud_world", 10);
 
   tf_broadcaster_ =
       std::make_shared<tf2_ros::TransformBroadcaster>(this);
@@ -408,8 +451,8 @@ void ROSWrapper::imuHandler(const sensor_msgs::msg::Imu::SharedPtr msg){
 
     odom_imu.header.stamp = msg->header.stamp;
     odom_robo.header.stamp = msg->header.stamp;
-    odom_imu.header.frame_id = "world";
-    odom_robo.header.frame_id = "world";
+    odom_imu.header.frame_id = g_world_frame;
+    odom_robo.header.frame_id = g_world_frame;
     pub_imu_odom_->publish(odom_imu);
     pub_robo_odom_->publish(odom_robo);
   }
@@ -521,6 +564,25 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
     lidar_data.end_time = lidar_data.start_time + offset_time;
     break;
   }
+  case LID_TYPE::GAZEBO:
+  {
+    // Handle generic PointCloud2 from Gazebo
+    pcl::PointCloud<pcl::PointXYZI> pl_orig;
+    pcl::fromROSMsg(*msg, pl_orig);
+    lidar_data.pc->reserve(pl_orig.size() / g_filter_rate + 1);
+    lidar_data.start_time = stampToSec(msg->header.stamp);
+
+    for(std::size_t i = 0; i < pl_orig.size(); i += g_filter_rate){
+      auto& pt = pl_orig.points[i];
+      if (!validPoint(pt.x, pt.y, pt.z)) continue;
+      // Use relative time based on index
+      offset_time = static_cast<double>(i) / pl_orig.size() * 0.1; // Assume 10Hz scan
+      lidar_data.pc->emplace_back(
+          pt.x, pt.y, pt.z, pt.intensity, offset_time);
+    }
+    lidar_data.end_time = lidar_data.start_time + offset_time;
+    break;
+  }
   default:
     return;
   }
@@ -567,7 +629,7 @@ bool ROSWrapper::sync_measure(MeasureGroup& meas){
 
 void ROSWrapper::pub_odom(const NavState& state){
   nav_msgs::msg::Odometry odom;
-  odom.header.frame_id = "world";
+  odom.header.frame_id = g_world_frame;
 
   odom.header.stamp = toRosTime(state.timestamp);
   odom.pose.pose.position.x = state.p[0];
@@ -617,8 +679,8 @@ void ROSWrapper::pub_odom(const NavState& state){
   geometry_msgs::msg::TransformStamped tf_msg;
 
   tf_msg.header.stamp = odom.header.stamp;
-  tf_msg.header.frame_id = "world";
-  tf_msg.child_frame_id = "imu";
+  tf_msg.header.frame_id = g_world_frame;
+  tf_msg.child_frame_id = g_imu_frame;
 
   tf_msg.transform.translation.x = state.p[0];
   tf_msg.transform.translation.y = state.p[1];
@@ -630,6 +692,34 @@ void ROSWrapper::pub_odom(const NavState& state){
   tf_msg.transform.rotation.w = temp_q.w();
 
   tf_broadcaster_->sendTransform(tf_msg);
+
+  // Publish base_footprint transform
+  if (g_footprint_pub_en) {
+    geometry_msgs::msg::TransformStamped footprint_transform;
+    footprint_transform.header.stamp = odom.header.stamp;
+    footprint_transform.header.frame_id = g_world_frame;
+    footprint_transform.child_frame_id = g_tf_base_footprint_frame;
+    
+    footprint_transform.transform.translation.x = state.p[0];
+    footprint_transform.transform.translation.y = state.p[1];
+    footprint_transform.transform.translation.z = state.p[2];
+    
+    double qx = temp_q.x();
+    double qy = temp_q.y();
+    double qz = temp_q.z();
+    double qw = temp_q.w();
+    
+    double yaw = std::atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz));
+    double cos_yaw_half = std::cos(yaw * 0.5);
+    double sin_yaw_half = std::sin(yaw * 0.5);
+    
+    footprint_transform.transform.rotation.w = cos_yaw_half;
+    footprint_transform.transform.rotation.x = 0.0;
+    footprint_transform.transform.rotation.y = 0.0;
+    footprint_transform.transform.rotation.z = sin_yaw_half;
+    
+    tf_broadcaster_->sendTransform(footprint_transform);
+  }
 
   // tf_msg.child_frame_id = "god";
   // tf_msg.transform.rotation.x = 0.0;
@@ -644,16 +734,28 @@ void ROSWrapper::pub_odom(const NavState& state){
 void ROSWrapper::pub_cloud_world(const CloudPtr& pc, double time){
   sensor_msgs::msg::PointCloud2 cloud;
   pcl::toROSMsg(*pc, cloud);
-  cloud.header.frame_id = "world";
+  cloud.header.frame_id = g_world_frame;
   cloud.header.stamp = toRosTime(time);
   pub_cloud_world_->publish(cloud);
+}
+
+
+void ROSWrapper::pub_cloud_body(const CloudPtr& pc, double time){
+  static auto pub_cloud_body_ = 
+    this->create_publisher<sensor_msgs::msg::PointCloud2>(
+        "lio/body/cloud", 10);
+  sensor_msgs::msg::PointCloud2 cloud;
+  pcl::toROSMsg(*pc, cloud);
+  cloud.header.frame_id = g_imu_frame;
+  cloud.header.stamp = toRosTime(time);
+  pub_cloud_body_->publish(cloud);
 }
 
 
 void ROSWrapper::pub_cloud2planner(const CloudPtr& pc, double time){
   static auto pub_cloud2robot_ =
     this->create_publisher<sensor_msgs::msg::PointCloud2>(
-        "/lio/robo/cloud_world", 10);
+        "lio/robo/cloud_world", 10);
   sensor_msgs::msg::PointCloud2 cloud;
   pcl::toROSMsg(*pc, cloud);
   cloud.header.frame_id = "world";
@@ -726,7 +828,7 @@ void ROSWrapper::set_global_map(const BASIC::CloudPtr& global_map){
 
   static auto global_map_pub =
     this->create_publisher<sensor_msgs::msg::PointCloud2>(
-          "/lio/global_map", 10);
+          "lio/global_map", 10);
 
   static auto global_map_timer =
     this->create_wall_timer(
@@ -787,6 +889,27 @@ void ROSWrapper::set_initial_data(BASIC::SE3& init_pose, bool& flg_get_init_gues
 
   if (flg_finish_init) {
     init_pose_sub.reset();
+  }
+}
+
+
+void ROSWrapper::saveMapServiceCallback(const std_srvs::srv::Trigger::Request::SharedPtr request, 
+                                        const std_srvs::srv::Trigger::Response::SharedPtr response)
+{
+  LOG(INFO) << GREEN << " ---> [Service] Save map service called" << RESET;
+  
+  if (super_lio_) {
+    // 调用SuperLIO的saveMap()方法保存地图
+    super_lio_->saveMap();
+    // 调用printTimeRecord()方法，参照退出流程
+    super_lio_->printTimeRecord();
+    LOG(INFO) << GREEN << " ---> [Service] Map saved successfully" << RESET;
+    response->success = true;
+    response->message = "Map saved successfully";
+  } else {
+    LOG(ERROR) << RED << " ---> [Service] SuperLIO instance not set" << RESET;
+    response->success = false;
+    response->message = "SuperLIO instance not set";
   }
 }
 

@@ -134,6 +134,14 @@ bool SuperLIO::kf_init(){
   V3 n = init_rot.col(0);
   double yaw = atan2(n(1), n(0));
 
+  LOG(INFO) << GREEN << " ---> [SuperLIO]: Gravity Alignment Results:" << RESET;
+  LOG(INFO) << GREEN << "      Mean Acceleration: [" << mean_acce.transpose() << "]" << RESET;
+  LOG(INFO) << GREEN << "      Gravity Norm: " << g_gravity_norm << RESET;
+  LOG(INFO) << GREEN << "      Measured Gravity: [" << gravity.transpose() << "]" << RESET;
+  LOG(INFO) << GREEN << "      Reference Gravity: [" << ref_gravity.transpose() << "]" << RESET;
+  LOG(INFO) << GREEN << "      Yaw Angle: " << yaw * 180.0 / M_PI << " degrees" << RESET;
+  LOG(INFO) << GREEN << "      IMU Scale: " << g_gravity_norm / mean_acce.norm() << RESET;
+
   M3 R_yaw_inv = Eigen::AngleAxis<scalar>(-yaw, V3::UnitZ()).toRotationMatrix(); 
 
   // init_rot represents the IMU orientation after gravity alignment (level orientation).
@@ -236,16 +244,24 @@ void SuperLIO::caceData(){
   static bool rm_PCD_dir = false;
   if(!rm_PCD_dir){
     rm_PCD_dir = true;
-    std::string cmd = "rm -rf " + g_save_map_dir + "/PCD";
+    std::string save_map_dir = g_save_map_dir;
+    if (!save_map_dir.empty() && save_map_dir[0] != '/') {
+      save_map_dir = g_root_dir + save_map_dir;
+    }
+    std::string cmd = "rm -rf " + save_map_dir + "/PCD";
     [[maybe_unused]] int res;
     res = system(cmd.c_str());
-    cmd = "mkdir -p " + g_save_map_dir + "/PCD";
+    cmd = "mkdir -p " + save_map_dir + "/PCD";
     res = system(cmd.c_str());
   }
 
   if (point_map_->size() > 0 && scan_wait_num >= g_pcd_save_interval) {
     pcd_index_++;
-    std::string map_name(std::string(g_save_map_dir + "/PCD/scans_") + std::to_string(pcd_index_) +
+    std::string save_map_dir = g_save_map_dir;
+    if (!save_map_dir.empty() && save_map_dir[0] != '/') {
+      save_map_dir = g_root_dir + save_map_dir;
+    }
+    std::string map_name(std::string(save_map_dir + "/PCD/scans_") + std::to_string(pcd_index_) +
                                std::string(".pcd"));
     LOG(INFO) << GREEN << " ---> current scan saved to /PCD/scans_" << pcd_index_ << "  size:  " << point_map_->size() << RESET;
     pcl::io::savePCDFileBinary(map_name, *point_map_);
@@ -258,8 +274,13 @@ void SuperLIO::caceData(){
 void SuperLIO::ProcessCaceMap(){
   namespace fs = std::filesystem;
 
-  std::string pcd_folder = g_save_map_dir + "/PCD";
-  std::string output_map_name = g_save_map_dir + "/" + g_map_name;
+  std::string save_map_dir = g_save_map_dir;
+  if (!save_map_dir.empty() && save_map_dir[0] != '/') {
+    save_map_dir = g_root_dir + save_map_dir;
+  }
+
+  std::string pcd_folder = save_map_dir + "/PCD";
+  std::string output_map_name = save_map_dir + "/" + g_map_name;
 
   LOG(INFO) << YELLOW << " ---> Merging PCD fragments in: " << pcd_folder << RESET;
 
@@ -316,7 +337,11 @@ void SuperLIO::saveMap(){
     LOG(INFO) << YELLOW << " ---> Saving last cace ... " << RESET;
     if (point_map_->size() > 0) {
       pcd_index_++;
-      std::string map_name(std::string(g_save_map_dir + "/PCD/scans_") + std::to_string(pcd_index_) +
+      std::string save_map_dir = g_save_map_dir;
+      if (!save_map_dir.empty() && save_map_dir[0] != '/') {
+        save_map_dir = g_root_dir + save_map_dir;
+      }
+      std::string map_name(std::string(save_map_dir + "/PCD/scans_") + std::to_string(pcd_index_) +
                                  std::string(".pcd"));
       LOG(INFO) << GREEN << " ---> current scan saved to /PCD/scans_" << pcd_index_ << "  size:  " << point_map_->size() << RESET;
       pcl::io::savePCDFileBinary(map_name, *point_map_);
@@ -331,7 +356,11 @@ void SuperLIO::saveMap(){
 
   LOG(INFO) << YELLOW << " ---> Saving map..... " << RESET;
   if(!point_map_->empty()){
-    std::string map_name = g_save_map_dir + "/" + g_map_name;
+    std::string save_map_dir = g_save_map_dir;
+    if (!save_map_dir.empty() && save_map_dir[0] != '/') {
+      save_map_dir = g_root_dir + save_map_dir;
+    }
+    std::string map_name = save_map_dir + "/" + g_map_name;
     LOG(INFO) << YELLOW << " ---> Save map to: " << map_name << RESET;
     pcl::VoxelGrid<PointType> voxel_fliter;
     PointCloudType latst_map;
@@ -564,20 +593,35 @@ void SuperLIO::Output(){
   transformation.block<3, 1>(0, 3) = state.p.cast<float>();
 
   CloudPtr world_pc(new PointCloudType());
+  CloudPtr body_pc(new PointCloudType());
   
   if(g_visual_map){
     static int count = -1;
     count++;
-    if(count % g_pub_step != 0){
-      return;
+    if(count % g_pub_step == 0){
+      count = 0;
+      if(g_visual_dense){
+        pcl::transformPointCloud(*scan_undistort_full_, *world_pc, transformation);
+        data_wrapper_->pub_cloud_world(world_pc, state.timestamp);
+      }else{
+        pcl::transformPointCloud(*ds_undistort_, *world_pc, transformation);
+        data_wrapper_->pub_cloud_world(world_pc, state.timestamp);
+      }
     }
-    count = 0;
-    if(g_visual_dense){
-      pcl::transformPointCloud(*scan_undistort_full_, *world_pc, transformation);
-      data_wrapper_->pub_cloud_world(world_pc, state.timestamp);
-    }else{
-      pcl::transformPointCloud(*ds_undistort_, *world_pc, transformation);
-      data_wrapper_->pub_cloud_world(world_pc, state.timestamp);
+  }
+
+  if(g_visual_map_body){
+    static int count_body = -1;
+    count_body++;
+    if(count_body % g_pub_step == 0){
+      count_body = 0;
+      if(g_visual_dense_body){
+        *body_pc = *scan_undistort_full_;
+        data_wrapper_->pub_cloud_body(body_pc, state.timestamp);
+      }else{
+        *body_pc = *ds_undistort_;
+        data_wrapper_->pub_cloud_body(body_pc, state.timestamp);
+      }
     }
   }
 }

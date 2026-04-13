@@ -12,9 +12,9 @@ from ament_index_python.packages import get_package_share_directory
 import sys, os
 import math
 
-def deg_to_rad(degrees):
+def deg_to_rad(deg):
     """将角度转换为弧度"""
-    return degrees * math.pi / 180.0
+    return str(deg * math.pi / 180.0)
 
 def generate_launch_description():
     # 首先导入全局配置
@@ -33,17 +33,17 @@ def generate_launch_description():
         print(f"方法2导入global_config失败: {e}")
         # 如果导入失败，使用默认值
         ONLINE_LIDAR = True
-        DEFAULT_BAG_PATH = '/home/ztl/slam_data/livox_record_new/'
-        DEFAULT_RELIABILITY_OVERRIDE = '/home/ztl/slam_data/reliability_override.yaml'
+        DEFAULT_BAG_PATH = '/home/cat/slam_data/livox_record_new/'
+        DEFAULT_RELIABILITY_OVERRIDE = '/home/cat/slam_data/reliability_override.yaml'
         DEFAULT_USE_SIM_TIME = False
         MANUAL_BUILD_MAP = False
         BUILD_TOOL = 'octomap_server'
         RECORD_ONLY = False
-        NAV2_DEFAULT_PARAMS_FILE = '/home/ztl/dog_slam/LIO-SAM_MID360_ROS2_PKG/ros2/src/nav2_dog_slam/config/nav2_params.yaml'
+        NAV2_DEFAULT_PARAMS_FILE = '/home/cat/git/xtd2_ws/XTDrone2_ego_planner/lio/nav2_dog_slam/config/nav2_params_sim.yaml'
         LIVOX_MID360_CONFIG_NO_TILT = ''
     
     pkg_super_lio = get_package_share_directory('super_lio')
-    config_yaml = os.path.join(pkg_super_lio, 'config', 'livox_360.yaml')
+    config_yaml = os.path.join(pkg_super_lio, 'config', 'gazebo_mid360.yaml')
     # rviz_config_file = os.path.join(pkg_super_lio, 'rviz', 'lio.rviz')
     
     use_sim_time = DEFAULT_USE_SIM_TIME
@@ -65,24 +65,24 @@ def generate_launch_description():
 
 
     # 在线模式：Livox雷达驱动
-    livox_driver_node = Node(
-        package='livox_ros_driver2',
-        executable='livox_ros_driver2_node',
-        name='livox_lidar_publisher',
-        output='screen',
-        parameters=[
-            {"xfer_format": 1},
-            {"multi_topic": 0},
-            {"data_src": 0},
-            {"publish_freq": 10.0},
-            {"output_data_type": 0},
-            {"frame_id": 'livox_frame'},
-            {"user_config_path": livox_config_path},
-            {"cmdline_input_bd_code": 'livox0000000001'},
-        ],
-        prefix=['taskset -c 4'],   # 绑定 CPU 4
-        condition=IfCondition(PythonExpression("'" + lidar_mode + "' == 'ONLINE'"))
-    )
+    # livox_driver_node = Node(
+    #     package='livox_ros_driver2',
+    #     executable='livox_ros_driver2_node',
+    #     name='livox_lidar_publisher',
+    #     output='screen',
+    #     parameters=[
+    #         {"xfer_format": 1},
+    #         {"multi_topic": 0},
+    #         {"data_src": 0},
+    #         {"publish_freq": 10.0},
+    #         {"output_data_type": 0},
+    #         {"frame_id": 'livox_frame'},
+    #         {"user_config_path": livox_config_path},
+    #         {"cmdline_input_bd_code": 'livox0000000001'},
+    #     ],
+    #     prefix=['taskset -c 4'],   # 绑定 CPU 4
+    #     condition=IfCondition(PythonExpression("'" + lidar_mode + "' == 'ONLINE'"))
+    # )
 
     # # 离线模式：rosbag播放
     # from launch.actions import ExecuteProcess
@@ -96,18 +96,11 @@ def generate_launch_description():
 
     # 根据模式选择启动相应的节点
     # ld.add_action(rosbag_player)
-    if lidar_mode == "ONLINE":
-        ld.add_action(livox_driver_node)
+    # if lidar_mode == "ONLINE":
+    #     ld.add_action(livox_driver_node)
 
     
-    declare_use_sim_time_arg = DeclareLaunchArgument(
-        'use_sim_time',
-        default_value=str(DEFAULT_USE_SIM_TIME),
-        description='Use simulation (Gazebo) clock'
-    )
-    use_sim_time = LaunchConfiguration('use_sim_time')
-
-    ld.add_action(declare_use_sim_time_arg)
+    use_sim_time = DEFAULT_USE_SIM_TIME
 
     # 创建Super-LIO生命周期节点
     super_lio_node = Node(
@@ -115,17 +108,9 @@ def generate_launch_description():
         executable='super_lio_node',
         name='super_lio_node',
         output='screen',
-        parameters=[config_yaml, {'use_sim_time': DEFAULT_USE_SIM_TIME}],
-        prefix=['taskset -c 7'],
-        arguments=['--ros-args', '--log-level', 'info'],
-        remappings=[
-            ('/lio/odom', 'lio/odom'),
-            ('/lio/imu/odom', 'lio/imu/odom'),
-            ('/lio/robo/odom', 'lio/robo/odom'),
-            ('/lio/path', 'lio/path'),
-            ('/lio/cloud_world', 'lio/cloud_world'),
-            ('/lio/body/cloud', 'lio/body/cloud'),
-        ]
+        parameters=[config_yaml, {'use_sim_time': use_sim_time}],
+        prefix=['taskset -c 7'],   # 绑定 CPU 7
+        arguments=['--ros-args', '--log-level', 'info']
     )
     ld.add_action(super_lio_node)
 
@@ -156,7 +141,7 @@ def generate_launch_description():
         executable='static_transform_publisher',
         name='static_transform_world_to_imu',
         parameters=[{'use_sim_time': DEFAULT_USE_SIM_TIME}],
-        arguments=['0.0', '0.0', '0.0', '0.0', '0.0', '0.0', 'world', 'imu'],
+        arguments=['0.0', '0.0', '0.0', '0', '0', '0', 'world', 'imu'],
         output='screen'
     )
     ld.add_action(static_transform_world_to_imu)
@@ -165,21 +150,22 @@ def generate_launch_description():
         package='tf2_ros',
         executable='static_transform_publisher',
         parameters=[{'use_sim_time': DEFAULT_USE_SIM_TIME}],
-        arguments=['0.0', '0', '0.0', '0', '0.0', '0', 'imu', 'livox_frame'],
+        arguments=['0.0', '0', '0.0', deg_to_rad(0), deg_to_rad(0), deg_to_rad(0), 'imu', 'livox_frame'],
         output='screen'
     )
     ld.add_action(imu_to_livox_frame_tf)
 
     # livox_frame -> base_link (机器人基坐标系到雷达坐标系的静态变换)
+    # 旋转角度：pitch = 50度 (0.87266弧度)
     livox_frame_to_base_link_tf = Node(
         package='tf2_ros',
         executable='static_transform_publisher',
         parameters=[{'use_sim_time': DEFAULT_USE_SIM_TIME}],
         # arguments=['0.1', '0', '0.1', '0', '0.0', '0', 'base_link', 'livox_frame'],
-        arguments=['-0.1', '0', '-0.1', '0', str(deg_to_rad(-30)), '0', 'livox_frame', 'base_link'],
+        arguments=['-0.07', '0', '-0.1', deg_to_rad(0), deg_to_rad(0), '0', 'livox_frame', 'base_link'],
         output='screen'
     )
-    ld.add_action(livox_frame_to_base_link_tf)
+    ld.add_action(livox_frame_to_base_link_tf) 
 
     base_link_to_base_footprint_tf = Node(
         package='tf2_ros',

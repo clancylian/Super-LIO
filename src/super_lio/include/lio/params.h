@@ -47,6 +47,8 @@ namespace LI2Sup{
   extern int   g_filter_rate;
   extern bool  g_enable_downsample;
   extern float g_voxel_fliter_size;
+  extern bool  g_intensity_filter_en;
+  extern float g_intensity_min;
 
   extern int    g_imu_type;
   extern double g_gravity_norm;

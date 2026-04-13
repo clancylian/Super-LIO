@@ -16,6 +16,8 @@
     lio.sensor.filter_rate: 4
     lio.sensor.enable_downsample: true
     lio.sensor.voxel_fliter_size: 0.5
+    lio.sensor.intensity_filter_en: false
+    lio.sensor.intensity_min: 0.0
     lio.sensor.gravity_norm: 9.8066
     lio.sensor.imu_type: 1
     lio.sensor.imu_na: 0.1

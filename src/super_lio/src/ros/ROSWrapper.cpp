@@ -62,6 +62,12 @@ void LoadParamFromRos(rclcpp::Node& node)
   node.declare_parameter<double>("lio.sensor.voxel_fliter_size", 0.2);
   node.get_parameter("lio.sensor.voxel_fliter_size", g_voxel_fliter_size);
 
+  node.declare_parameter<bool>("lio.sensor.intensity_filter_en", false);
+  node.get_parameter("lio.sensor.intensity_filter_en", g_intensity_filter_en);
+
+  node.declare_parameter<double>("lio.sensor.intensity_min", 0.0);
+  node.get_parameter("lio.sensor.intensity_min", g_intensity_min);
+
   node.declare_parameter<double>("lio.sensor.gravity_norm", 9.81);
   node.get_parameter("lio.sensor.gravity_norm", g_gravity_norm);
 
@@ -473,6 +479,7 @@ void ROSWrapper::livoxHandler(const livox_ros_driver2::msg::CustomMsg::SharedPtr
     if (tag == 0x10 || tag == 0x00){
       auto dis = pt.x * pt.x + pt.y * pt.y + pt.z * pt.z;
       if(dis > g_blind2 && dis < g_maxrange2){
+        if(g_intensity_filter_en && pt.reflectivity < g_intensity_min) continue;
         offset_time = pt.offset_time * 1e-9;
         lidar_data.pc->emplace_back(pt.x, pt.y, pt.z, pt.reflectivity, offset_time);
       }
@@ -506,6 +513,7 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
     {
       auto& pt = pl_orig.points[i];
       if (!validPoint(pt.x, pt.y, pt.z)) continue;
+      if(g_intensity_filter_en && pt.intensity < g_intensity_min) continue;
       offset_time = pt.timestamp - time_begin;
       lidar_data.pc->emplace_back(
           pt.x, pt.y, pt.z, pt.intensity, offset_time);
@@ -541,6 +549,7 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
     for(std::size_t i = 0; i < pl_orig.size(); i += g_filter_rate){
       auto& pt = pl_orig.points[i];
       if (!validPoint(pt.x, pt.y, pt.z)) continue;
+      if(g_intensity_filter_en && pt.intensity < g_intensity_min) continue;
       lidar_data.pc->emplace_back(
           pt.x, pt.y, pt.z, pt.intensity, pt.time);
     }
@@ -557,6 +566,7 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
     for(std::size_t i = 0; i < pl_orig.size(); i += g_filter_rate){
       auto& pt = pl_orig.points[i];
       if (!validPoint(pt.x, pt.y, pt.z)) continue;
+      if(g_intensity_filter_en && pt.intensity < g_intensity_min) continue;
       offset_time = pt.t * 1e-9;
       lidar_data.pc->emplace_back(
           pt.x, pt.y, pt.z, pt.intensity, offset_time);
@@ -566,7 +576,6 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
   }
   case LID_TYPE::GAZEBO:
   {
-    // Handle generic PointCloud2 from Gazebo
     pcl::PointCloud<pcl::PointXYZI> pl_orig;
     pcl::fromROSMsg(*msg, pl_orig);
     lidar_data.pc->reserve(pl_orig.size() / g_filter_rate + 1);
@@ -575,8 +584,8 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
     for(std::size_t i = 0; i < pl_orig.size(); i += g_filter_rate){
       auto& pt = pl_orig.points[i];
       if (!validPoint(pt.x, pt.y, pt.z)) continue;
-      // Use relative time based on index
-      offset_time = static_cast<double>(i) / pl_orig.size() * 0.1; // Assume 10Hz scan
+      if(g_intensity_filter_en && pt.intensity < g_intensity_min) continue;
+      offset_time = static_cast<double>(i) / pl_orig.size() * 0.1;
       lidar_data.pc->emplace_back(
           pt.x, pt.y, pt.z, pt.intensity, offset_time);
     }

@@ -30,6 +30,8 @@ namespace LI2Sup{
   int    g_filter_rate;
   bool   g_enable_downsample;
   float  g_voxel_fliter_size;
+  bool   g_intensity_filter_en = false;
+  float  g_intensity_min = 0.0f;
 
   int    g_imu_type;
   double g_gravity_norm = 9.7946;

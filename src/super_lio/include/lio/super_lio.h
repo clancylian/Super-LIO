@@ -29,6 +29,8 @@ public:
   SuperLIO(){};
   ~SuperLIO(){};
 
+  static bool set_realtime_priority(int priority = 95);
+
   void setROSWrapper(const ROSWrapper::Ptr& wrapper){
     data_wrapper_ = wrapper;
   }

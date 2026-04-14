@@ -6,11 +6,32 @@
 #include <tbb/blocked_range.h>
 #include <tbb/concurrent_vector.h>
 #include <tbb/enumerable_thread_specific.h>
+#include <sched.h>
+#include <pthread.h>
+#include <cstring>
 
 
 using namespace BASIC;
 
 namespace LI2Sup{
+
+bool SuperLIO::set_realtime_priority(int priority)
+{
+  struct sched_param param;
+  param.sched_priority = priority;
+  
+  int ret = pthread_setschedparam(pthread_self(), SCHED_FIFO, &param);
+  if (ret != 0) {
+    LOG(ERROR) << "Failed to set SCHED_FIFO priority " << priority 
+               << ", error: " << std::strerror(ret);
+    return false;
+  }
+  
+  LOG(INFO) << GREEN << " ---> [SuperLIO]: Set SCHED_FIFO priority to " << priority << RESET;
+  return true;
+}
+
+
 
 inline bool calc_plane_coeff(const int N, const std::array<V3, 5>& points, std::array<double, 4>& abcd)
 {

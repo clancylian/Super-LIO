@@ -24,6 +24,8 @@ int main(int argc, char** argv){
   lio->setROSWrapper(data_wrapper);
   lio->init();
 
+  SuperLIO::set_realtime_priority(95);
+
   auto timer = data_wrapper->create_wall_timer(
     std::chrono::milliseconds(2),
     [lio]() { lio->process(); },

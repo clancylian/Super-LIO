@@ -134,6 +134,7 @@ private:
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pub_robo_odom_;  /// IMU fre   --> Robot frame
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr pub_path_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub_cloud_world_;
+  rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub_cloud_body_;
 };
 
 } // namespace END.

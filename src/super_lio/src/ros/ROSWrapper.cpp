@@ -384,9 +384,17 @@ void ROSWrapper::setupIO(){
   pub_path_ = this->create_publisher<nav_msgs::msg::Path>(
       "lio/path", 10);
 
+  auto pointcloud_qos = rclcpp::QoS(rclcpp::KeepLast(2))
+    .best_effort()
+    .durability_volatile();
+
   pub_cloud_world_ =
     this->create_publisher<sensor_msgs::msg::PointCloud2>(
-        "lio/cloud_world", 10);
+        "lio/cloud_world", pointcloud_qos);
+
+  pub_cloud_body_ =
+    this->create_publisher<sensor_msgs::msg::PointCloud2>(
+        "lio/body/cloud", pointcloud_qos);
 
   tf_broadcaster_ =
       std::make_shared<tf2_ros::TransformBroadcaster>(this);
@@ -750,9 +758,6 @@ void ROSWrapper::pub_cloud_world(const CloudPtr& pc, double time){
 
 
 void ROSWrapper::pub_cloud_body(const CloudPtr& pc, double time){
-  static auto pub_cloud_body_ = 
-    this->create_publisher<sensor_msgs::msg::PointCloud2>(
-        "lio/body/cloud", 10);
   sensor_msgs::msg::PointCloud2 cloud;
   pcl::toROSMsg(*pc, cloud);
   cloud.header.frame_id = g_imu_frame;
@@ -764,7 +769,7 @@ void ROSWrapper::pub_cloud_body(const CloudPtr& pc, double time){
 void ROSWrapper::pub_cloud2planner(const CloudPtr& pc, double time){
   static auto pub_cloud2robot_ =
     this->create_publisher<sensor_msgs::msg::PointCloud2>(
-        "lio/robo/cloud_world", 10);
+        "lio/robo/cloud_world", rclcpp::QoS(rclcpp::KeepLast(2)).best_effort().durability_volatile());
   sensor_msgs::msg::PointCloud2 cloud;
   pcl::toROSMsg(*pc, cloud);
   cloud.header.frame_id = "world";
@@ -778,7 +783,7 @@ void ROSWrapper::pub_cloud_body_pose(const CloudPtr& pc,
 {
   static auto pub_cloud_body_pose_ =
     this->create_publisher<super_lio::msg::CloudPose>(
-        "/lio/body/cloud_pose", 10);
+        "/lio/body/cloud_pose", rclcpp::QoS(rclcpp::KeepLast(2)).best_effort().durability_volatile());
   super_lio::msg::CloudPose cloud_pose;
   pcl::toROSMsg(*pc, cloud_pose.cloud);
   cloud_pose.cloud.header.stamp = toRosTime(state.timestamp); 
@@ -800,7 +805,7 @@ void ROSWrapper::pub_cloud_world_pose(const CloudPtr& pc,
 {
   static auto pub_cloud_world_pose_ =
     this->create_publisher<super_lio::msg::CloudPose>(
-        "/lio/world/cloud_pose", 10);
+        "/lio/world/cloud_pose", rclcpp::QoS(rclcpp::KeepLast(2)).best_effort().durability_volatile());
   super_lio::msg::CloudPose cloud_pose;
   pcl::toROSMsg(*pc, cloud_pose.cloud);
   cloud_pose.cloud.header.stamp = toRosTime(state.timestamp);  
@@ -837,7 +842,7 @@ void ROSWrapper::set_global_map(const BASIC::CloudPtr& global_map){
 
   static auto global_map_pub =
     this->create_publisher<sensor_msgs::msg::PointCloud2>(
-          "lio/global_map", 10);
+          "lio/global_map", rclcpp::QoS(rclcpp::KeepLast(2)).best_effort().durability_volatile());
 
   static auto global_map_timer =
     this->create_wall_timer(

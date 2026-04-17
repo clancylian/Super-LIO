@@ -8,6 +8,10 @@
 #include <iostream>
 #include <cassert>
 #include <filesystem>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
+#include <atomic>
 
 #include <pcl/io/pcd_io.h>
 #include <pcl/common/transforms.h>
@@ -27,7 +31,7 @@ namespace LI2Sup{
 class SuperLIO{
 public:
   SuperLIO(){};
-  ~SuperLIO(){};
+  ~SuperLIO();
 
   static bool set_realtime_priority(int priority = 95);
 
@@ -40,6 +44,14 @@ public:
   void printTimeRecord();
 
 protected:
+  struct OutputData {
+    NavState state;
+    BASIC::CloudPtr world_pc;
+    BASIC::CloudPtr body_pc;
+    bool has_world_pc = false;
+    bool has_body_pc = false;
+  };
+
   void stateWaitKFInit();
   void stateWaitMapInit();
   void stateProcess();
@@ -50,6 +62,7 @@ protected:
   void Observe();
   virtual void UpdateMap();
   virtual void Output();
+  void OutputThread();
   void caceData();
   void ProcessCaceMap();
 
@@ -83,6 +96,12 @@ protected:
   int pcd_index_ = -1;
 
   Timer time_record_;
+
+  std::thread output_thread_;
+  std::mutex output_mutex_;
+  std::condition_variable output_cv_;
+  std::queue<OutputData> output_queue_;
+  std::atomic<bool> output_running_{false};
 };
 
 } // namespace END.

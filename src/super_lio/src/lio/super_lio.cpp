@@ -104,7 +104,18 @@ void SuperLIO::init(){
 
   state_fn_ = &SuperLIO::stateWaitKFInit;
 
+  output_running_ = true;
+  output_thread_ = std::thread(&SuperLIO::OutputThread, this);
+
   LOG(INFO) << GREEN << " ---> [SuperLIO]: initialized." << RESET;
+}
+
+SuperLIO::~SuperLIO(){
+  output_running_ = false;
+  output_cv_.notify_all();
+  if(output_thread_.joinable()){
+    output_thread_.join();
+  }
 }
 
 
@@ -607,27 +618,26 @@ void SuperLIO::UpdateMap() {
 
 void SuperLIO::Output(){
   auto state = kf_->GetNavState();
-  data_wrapper_->pub_odom(state);  
+  
+  OutputData output_data;
+  output_data.state = state;
 
   Eigen::Matrix4f transformation = Eigen::Matrix4f::Identity();
   transformation.block<3, 3>(0, 0) = state.R.R_.cast<float>();
   transformation.block<3, 1>(0, 3) = state.p.cast<float>();
 
-  CloudPtr world_pc(new PointCloudType());
-  CloudPtr body_pc(new PointCloudType());
-  
   if(g_visual_map){
     static int count = -1;
     count++;
     if(count % g_pub_step == 0){
       count = 0;
+      output_data.world_pc.reset(new PointCloudType());
       if(g_visual_dense){
-        pcl::transformPointCloud(*scan_undistort_full_, *world_pc, transformation);
-        data_wrapper_->pub_cloud_world(world_pc, state.timestamp);
+        pcl::transformPointCloud(*scan_undistort_full_, *output_data.world_pc, transformation);
       }else{
-        pcl::transformPointCloud(*ds_undistort_, *world_pc, transformation);
-        data_wrapper_->pub_cloud_world(world_pc, state.timestamp);
+        pcl::transformPointCloud(*ds_undistort_, *output_data.world_pc, transformation);
       }
+      output_data.has_world_pc = true;
     }
   }
 
@@ -636,13 +646,55 @@ void SuperLIO::Output(){
     count_body++;
     if(count_body % g_pub_step == 0){
       count_body = 0;
+      output_data.body_pc.reset(new PointCloudType());
       if(g_visual_dense_body){
-        *body_pc = *scan_undistort_full_;
-        data_wrapper_->pub_cloud_body(body_pc, state.timestamp);
+        *output_data.body_pc = *scan_undistort_full_;
       }else{
-        *body_pc = *ds_undistort_;
-        data_wrapper_->pub_cloud_body(body_pc, state.timestamp);
+        *output_data.body_pc = *ds_undistort_;
       }
+      output_data.has_body_pc = true;
+    }
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(output_mutex_);
+    if(output_queue_.size() > 5){
+      output_queue_.pop();
+    }
+    output_queue_.push(std::move(output_data));
+  }
+  output_cv_.notify_one();
+}
+
+void SuperLIO::OutputThread(){
+  while(output_running_){
+    OutputData data;
+    {
+      std::unique_lock<std::mutex> lock(output_mutex_);
+      output_cv_.wait(lock, [this]{
+        return !output_queue_.empty() || !output_running_;
+      });
+      
+      if(!output_running_ && output_queue_.empty()){
+        break;
+      }
+      
+      if(output_queue_.empty()){
+        continue;
+      }
+      
+      data = std::move(output_queue_.front());
+      output_queue_.pop();
+    }
+    
+    data_wrapper_->pub_odom(data.state);
+    
+    if(data.has_world_pc && data.world_pc){
+      data_wrapper_->pub_cloud_world(data.world_pc, data.state.timestamp);
+    }
+    
+    if(data.has_body_pc && data.body_pc){
+      data_wrapper_->pub_cloud_body(data.body_pc, data.state.timestamp);
     }
   }
 }

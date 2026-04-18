@@ -90,6 +90,14 @@ target_link_libraries(relocation_node
   ${cpp_typesupport_target}
 )
 
+add_executable(dynamic_remove_node src/lio/dynamic_remove.cpp)
+target_link_libraries(dynamic_remove_node
+  Eigen3::Eigen
+  ${PCL_LIBRARIES}
+  glog
+  pthread
+)
+
 install(TARGETS
   lio
   ARCHIVE DESTINATION lib
@@ -103,6 +111,7 @@ install(TARGETS
 
 install(TARGETS
   relocation_node
+  dynamic_remove_node
   DESTINATION lib/${PROJECT_NAME}
 )
 

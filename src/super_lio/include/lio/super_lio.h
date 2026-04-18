@@ -52,6 +52,14 @@ protected:
     bool has_body_pc = false;
   };
 
+  struct SaveData {
+    BASIC::CloudPtr cloud_to_save;
+    int pcd_index;
+    double timestamp;
+    BASIC::V3 position;
+    BASIC::Quat orientation;
+  };
+
   void stateWaitKFInit();
   void stateWaitMapInit();
   void stateProcess();
@@ -63,6 +71,7 @@ protected:
   virtual void UpdateMap();
   virtual void Output();
   void OutputThread();
+  void SaveThread();
   void caceData();
   void ProcessCaceMap();
 
@@ -102,6 +111,12 @@ protected:
   std::condition_variable output_cv_;
   std::queue<OutputData> output_queue_;
   std::atomic<bool> output_running_{false};
+
+  std::thread save_thread_;
+  std::mutex save_mutex_;
+  std::condition_variable save_cv_;
+  std::queue<SaveData> save_queue_;
+  std::atomic<bool> save_running_{false};
 };
 
 } // namespace END.

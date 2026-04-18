@@ -9,6 +9,9 @@
 #include <sched.h>
 #include <pthread.h>
 #include <cstring>
+#include <fstream>
+#include <iomanip>
+#include <sstream>
 
 
 using namespace BASIC;
@@ -107,6 +110,11 @@ void SuperLIO::init(){
   output_running_ = true;
   output_thread_ = std::thread(&SuperLIO::OutputThread, this);
 
+  if(g_save_map){
+    save_running_ = true;
+    save_thread_ = std::thread(&SuperLIO::SaveThread, this);
+  }
+
   LOG(INFO) << GREEN << " ---> [SuperLIO]: initialized." << RESET;
 }
 
@@ -115,6 +123,12 @@ SuperLIO::~SuperLIO(){
   output_cv_.notify_all();
   if(output_thread_.joinable()){
     output_thread_.join();
+  }
+
+  save_running_ = false;
+  save_cv_.notify_all();
+  if(save_thread_.joinable()){
+    save_thread_.join();
   }
 }
 
@@ -289,16 +303,72 @@ void SuperLIO::caceData(){
 
   if (point_map_->size() > 0 && scan_wait_num >= g_pcd_save_interval) {
     pcd_index_++;
-    std::string save_map_dir = g_save_map_dir;
-    if (!save_map_dir.empty() && save_map_dir[0] != '/') {
-      save_map_dir = g_root_dir + save_map_dir;
+    
+    SaveData save_data;
+    save_data.cloud_to_save.reset(new PointCloudType(*point_map_));
+    save_data.pcd_index = pcd_index_;
+    save_data.timestamp = state.timestamp;
+    save_data.position = state.p.cast<float>();
+    save_data.orientation = BASIC::Quat(state.R.R_.cast<float>());
+    
+    {
+      std::lock_guard<std::mutex> lock(save_mutex_);
+      if(save_queue_.size() > 3){
+        save_queue_.pop();
+      }
+      save_queue_.push(std::move(save_data));
     }
-    std::string map_name(std::string(save_map_dir + "/PCD/scans_") + std::to_string(pcd_index_) +
-                               std::string(".pcd"));
-    LOG(INFO) << GREEN << " ---> current scan saved to /PCD/scans_" << pcd_index_ << "  size:  " << point_map_->size() << RESET;
-    pcl::io::savePCDFileBinary(map_name, *point_map_);
+    save_cv_.notify_one();
+    
     point_map_->clear();
     scan_wait_num = 0;
+  }
+}
+
+void SuperLIO::SaveThread(){
+  while(save_running_){
+    SaveData data;
+    {
+      std::unique_lock<std::mutex> lock(save_mutex_);
+      save_cv_.wait(lock, [this]{
+        return !save_queue_.empty() || !save_running_;
+      });
+      
+      if(!save_running_ && save_queue_.empty()){
+        break;
+      }
+      
+      if(save_queue_.empty()){
+        continue;
+      }
+      
+      data = std::move(save_queue_.front());
+      save_queue_.pop();
+    }
+    
+    if(data.cloud_to_save && !data.cloud_to_save->empty()){
+      std::string save_map_dir = g_save_map_dir;
+      if (!save_map_dir.empty() && save_map_dir[0] != '/') {
+        save_map_dir = g_root_dir + save_map_dir;
+      }
+      std::string map_name(std::string(save_map_dir + "/PCD/scans_") + std::to_string(data.pcd_index) +
+                                 std::string(".pcd"));
+      LOG(INFO) << GREEN << " ---> current scan saved to /PCD/scans_" << data.pcd_index 
+                << "  size:  " << data.cloud_to_save->size() << RESET;
+      pcl::io::savePCDFileBinary(map_name, *data.cloud_to_save);
+      
+      std::string odom_name(std::string(save_map_dir + "/PCD/scans_") + std::to_string(data.pcd_index) +
+                                 std::string(".txt"));
+      std::ofstream odom_file(odom_name);
+      if(odom_file.is_open()){
+        odom_file << std::fixed << std::setprecision(6);
+        odom_file << data.timestamp << " "
+                  << data.position.x() << " " << data.position.y() << " " << data.position.z() << " "
+                  << data.orientation.x() << " " << data.orientation.y() << " " 
+                  << data.orientation.z() << " " << data.orientation.w() << std::endl;
+        odom_file.close();
+      }
+    }
   }
 }
 
@@ -369,17 +439,69 @@ void SuperLIO::saveMap(){
     LOG(INFO) << YELLOW << " ---> Saving last cace ... " << RESET;
     if (point_map_->size() > 0) {
       pcd_index_++;
+      
+      auto state = kf_->GetNavState();
+      SaveData save_data;
+      save_data.cloud_to_save.reset(new PointCloudType(*point_map_));
+      save_data.pcd_index = pcd_index_;
+      save_data.timestamp = state.timestamp;
+      save_data.position = state.p.cast<float>();
+      save_data.orientation = BASIC::Quat(state.R.R_.cast<float>());
+      
+      {
+        std::lock_guard<std::mutex> lock(save_mutex_);
+        save_queue_.push(std::move(save_data));
+      }
+      save_cv_.notify_one();
+      
+      point_map_->clear();
+    }
+    
+    {
+      std::unique_lock<std::mutex> lock(save_mutex_);
+      save_cv_.wait(lock, [this]{
+        return save_queue_.empty();
+      });
+    }
+    
+    LOG(INFO) << GREEN << " ---> Save last cace success. " << RESET;
+    
+    if(g_dynamic_removal_enable){
+      LOG(INFO) << YELLOW << " ---> Running dynamic point removal ... " << RESET;
       std::string save_map_dir = g_save_map_dir;
       if (!save_map_dir.empty() && save_map_dir[0] != '/') {
         save_map_dir = g_root_dir + save_map_dir;
       }
-      std::string map_name(std::string(save_map_dir + "/PCD/scans_") + std::to_string(pcd_index_) +
-                                 std::string(".pcd"));
-      LOG(INFO) << GREEN << " ---> current scan saved to /PCD/scans_" << pcd_index_ << "  size:  " << point_map_->size() << RESET;
-      pcl::io::savePCDFileBinary(map_name, *point_map_);
-      point_map_->clear();
+      std::string pcd_folder = save_map_dir + "/PCD";
+      std::string filtered_output = save_map_dir + "/filtered_" + g_map_name;
+      
+      std::stringstream cmd;
+      cmd << "ros2 run super_lio dynamic_remove_node"
+          << " --input_dir " << pcd_folder
+          << " --output_file " << filtered_output
+          << " --grid_size " << g_dynamic_removal_grid_size
+          << " --min_neighbors " << g_dynamic_removal_min_neighbors
+          << " --method " << g_dynamic_removal_method;
+      
+      if(g_dynamic_removal_method == 0) {
+        cmd << " --frame_window " << g_dynamic_removal_frame_window;
+      } else {
+        cmd << " --raycast_min_hits " << g_dynamic_removal_raycast_min_hits;
+      }
+      
+      if(!g_dynamic_removal_isolated_removal) {
+        cmd << " --disable_isolated";
+      }
+      
+      LOG(INFO) << YELLOW << " ---> Executing: " << cmd.str() << RESET;
+      int ret = system(cmd.str().c_str());
+      if(ret == 0) {
+        LOG(INFO) << GREEN << " ---> Dynamic point removal success. Output: " << filtered_output << RESET;
+      } else {
+        LOG(WARNING) << RED << " ---> Dynamic point removal failed with code: " << ret << RESET;
+      }
     }
-    LOG(INFO) << GREEN << " ---> Save last cace success. " << RESET;
+    
     LOG(INFO) << YELLOW << " ---> Process cace map ... " << RESET;
     ProcessCaceMap();
     LOG(INFO) << GREEN << " ---> Process cace map success. " << RESET;

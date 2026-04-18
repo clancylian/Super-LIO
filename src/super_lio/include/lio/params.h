@@ -106,6 +106,15 @@ namespace LI2Sup{
   extern bool g_update_map;
   extern double g_init_px, g_init_py, g_init_pz, g_init_roll, g_init_pitch, g_init_yaw;
 
+  /// for dynamic point removal
+  extern bool g_dynamic_removal_enable;
+  extern int  g_dynamic_removal_method;     // 0: Temporal, 1: Raycast
+  extern float g_dynamic_removal_grid_size;
+  extern int   g_dynamic_removal_min_neighbors;
+  extern int   g_dynamic_removal_frame_window;
+  extern int   g_dynamic_removal_raycast_min_hits;
+  extern bool  g_dynamic_removal_isolated_removal;
+
 }
 
 #endif

@@ -82,4 +82,13 @@ namespace LI2Sup{
   bool g_update_map = false;
   double g_init_px, g_init_py, g_init_pz, g_init_roll, g_init_pitch, g_init_yaw;
 
+  /// for dynamic point removal
+  bool g_dynamic_removal_enable = false;
+  int  g_dynamic_removal_method = 0;
+  float g_dynamic_removal_grid_size = 0.2f;
+  int   g_dynamic_removal_min_neighbors = 2;
+  int   g_dynamic_removal_frame_window = 1;
+  int   g_dynamic_removal_raycast_min_hits = 2;
+  bool  g_dynamic_removal_isolated_removal = true;
+
 }

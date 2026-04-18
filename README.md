@@ -82,6 +82,26 @@ source install/setup.bash
 ros2 launch super_lio relocation.py
 ```
 
+#### 🧹 Dynamic Point Removal
+Super-LIO supports dynamic point removal when saving maps, which filters out moving objects (pedestrians, vehicles, etc.) from the point cloud map.
+
+**Configuration** (in yaml file):
+```yaml
+lio.dynamic_removal.enable: true        # Enable dynamic point removal
+lio.dynamic_removal.method: 0           # 0: Temporal, 1: Raycast
+lio.dynamic_removal.grid_size: 0.2      # Voxel grid size (meters)
+lio.dynamic_removal.min_neighbors: 2    # Min neighbor grids to keep a point
+lio.dynamic_removal.frame_window: 1     # Frame window for Temporal method
+lio.dynamic_removal.raycast_min_hits: 2 # Min hits for Raycast method
+lio.dynamic_removal.isolated_removal: true
+```
+
+**Methods**:
+- **Temporal**: Filters points that are not occupied in neighbor frames
+- **Raycast**: Filters points penetrated by rays from sensor position (requires odom data)
+
+**Output**: When enabled, outputs `filtered_<map_name>` alongside the original map.
+
 
 ## Datasets
 <p align="center">
@@ -121,6 +141,12 @@ We kindly recommend to cite [our paper](https://ieeexplore.ieee.org/document/113
 <summary>Click to expand <b>Update Logs</b> (click to collapse)</summary>
 
 <br>
+
+- 2026-04-18
+  - Add dynamic point removal module (Temporal & Raycast methods)
+  - Change map saving to async thread
+  - Save odom info alongside each PCD frame
+  - Add configuration parameters for dynamic removal
 
 - 2026-01-04  
   - Separate ROS interface and algorithm.

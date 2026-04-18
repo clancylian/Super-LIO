@@ -227,6 +227,51 @@ void LoadParamFromRos(rclcpp::Node& node)
   g_init_pitch = init_pose[4];
   g_init_yaw   = init_pose[5];
 
+  // ================= dynamic removal =================
+  node.declare_parameter<bool>("lio.dynamic_removal.enable", false);
+  node.get_parameter("lio.dynamic_removal.enable", g_dynamic_removal_enable);
+
+  node.declare_parameter<int>("lio.dynamic_removal.method", 0);
+  node.get_parameter("lio.dynamic_removal.method", g_dynamic_removal_method);
+
+  node.declare_parameter<double>("lio.dynamic_removal.grid_size", 0.2);
+  double temp_grid_size;
+  node.get_parameter("lio.dynamic_removal.grid_size", temp_grid_size);
+  g_dynamic_removal_grid_size = static_cast<float>(temp_grid_size);
+
+  node.declare_parameter<int>("lio.dynamic_removal.min_neighbors", 2);
+  node.get_parameter("lio.dynamic_removal.min_neighbors", g_dynamic_removal_min_neighbors);
+
+  node.declare_parameter<int>("lio.dynamic_removal.frame_window", 1);
+  node.get_parameter("lio.dynamic_removal.frame_window", g_dynamic_removal_frame_window);
+
+  node.declare_parameter<int>("lio.dynamic_removal.raycast_min_hits", 2);
+  node.get_parameter("lio.dynamic_removal.raycast_min_hits", g_dynamic_removal_raycast_min_hits);
+
+  node.declare_parameter<bool>("lio.dynamic_removal.isolated_removal", true);
+  node.get_parameter("lio.dynamic_removal.isolated_removal", g_dynamic_removal_isolated_removal);
+
+  LOG(INFO) << GREEN << " ---> [Param] dynamic_removal/enable: "
+            << (g_dynamic_removal_enable ? "true" : "false") << RESET;
+
+  LOG(INFO) << GREEN << " ---> [Param] dynamic_removal/method: "
+            << (g_dynamic_removal_method == 0 ? "Temporal" : "Raycast") << RESET;
+
+  LOG(INFO) << GREEN << " ---> [Param] dynamic_removal/grid_size: "
+            << g_dynamic_removal_grid_size << RESET;
+
+  LOG(INFO) << GREEN << " ---> [Param] dynamic_removal/min_neighbors: "
+            << g_dynamic_removal_min_neighbors << RESET;
+
+  LOG(INFO) << GREEN << " ---> [Param] dynamic_removal/frame_window: "
+            << g_dynamic_removal_frame_window << RESET;
+
+  LOG(INFO) << GREEN << " ---> [Param] dynamic_removal/raycast_min_hits: "
+            << g_dynamic_removal_raycast_min_hits << RESET;
+
+  LOG(INFO) << GREEN << " ---> [Param] dynamic_removal/isolated_removal: "
+            << (g_dynamic_removal_isolated_removal ? "true" : "false") << RESET;
+
   LOG(INFO) << GREEN << " ---> [Params]: Load from ROS2 parameter server."
             << RESET;
 }

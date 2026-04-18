@@ -55,3 +55,11 @@
     lio.output.imu_frame: "imu"
 
     lio.eva.timer: true
+    
+    lio.dynamic_removal.enable: false
+    lio.dynamic_removal.method: 0
+    lio.dynamic_removal.grid_size: 0.2
+    lio.dynamic_removal.min_neighbors: 2
+    lio.dynamic_removal.frame_window: 1
+    lio.dynamic_removal.raycast_min_hits: 2
+    lio.dynamic_removal.isolated_removal: true

@@ -32,7 +32,6 @@ int main(int argc, char** argv){
 
   rclcpp::spin(data_wrapper);
 
-  lio->saveMap();
   lio->printTimeRecord();
 
   rclcpp::shutdown();

@@ -350,6 +350,7 @@ void SuperLIO::SaveThread(){
       
       data = std::move(save_queue_.front());
       save_queue_.pop();
+      save_cv_.notify_one();
     }
     
     if(data.cloud_to_save && !data.cloud_to_save->empty()){
@@ -388,7 +389,17 @@ void SuperLIO::ProcessCaceMap(){
   }
 
   std::string pcd_folder = save_map_dir + "/PCD";
-  std::string output_map_name = save_map_dir + "/" + g_map_name;
+  std::string output_map_name;
+  if(g_dynamic_removal_enable){
+    size_t dot_pos = g_map_name.find_last_of('.');
+    if(dot_pos != std::string::npos){
+      output_map_name = save_map_dir + "/" + g_map_name.substr(0, dot_pos) + "_ori" + g_map_name.substr(dot_pos);
+    } else {
+      output_map_name = save_map_dir + "/" + g_map_name + "_ori";
+    }
+  } else {
+    output_map_name = save_map_dir + "/" + g_map_name;
+  }
 
   LOG(INFO) << YELLOW << " ---> Merging PCD fragments in: " << pcd_folder << RESET;
 
@@ -479,7 +490,7 @@ void SuperLIO::saveMap(){
         save_map_dir = g_root_dir + save_map_dir;
       }
       std::string pcd_folder = save_map_dir + "/PCD";
-      std::string filtered_output = save_map_dir + "/filtered_" + g_map_name;
+      std::string filtered_output = save_map_dir + "/" + g_map_name;
       
       std::stringstream cmd;
       cmd << "ros2 run super_lio dynamic_remove_node"

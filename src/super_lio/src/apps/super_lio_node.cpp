@@ -30,7 +30,6 @@ int main(int argc, char** argv){
   lio->init();
 
   rclcpp::on_shutdown([lio]() {
-    lio->saveMap();
     lio->printTimeRecord();
   });
 

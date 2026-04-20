@@ -5,7 +5,7 @@
     lio.map.save_map_dir: "/home/cat/slam_data/pcd"
     lio.map.map_name: "test.pcd"
     lio.map.ds_size: 0.25
-    lio.map.save_interval: 500
+    lio.map.save_interval: 50
 
     lio.ros.lidar_topic: "/livox/lidar"
     lio.ros.imu_topic: "/livox/imu"
@@ -56,10 +56,10 @@
 
     lio.eva.timer: true
 
-    lio.dynamic_removal.enable: false
-    lio.dynamic_removal.method: 0
-    lio.dynamic_removal.grid_size: 0.2
-    lio.dynamic_removal.min_neighbors: 2
-    lio.dynamic_removal.frame_window: 1
-    lio.dynamic_removal.raycast_min_hits: 2
-    lio.dynamic_removal.isolated_removal: true
+    lio.dynamic_removal.enable: true            # 是否启用动态点移除(如行人、车辆等移动物体)
+    lio.dynamic_removal.method: 0               # 移除方法: 0=时序法(检查前后帧占用), 1=射线法(射线穿透检测)
+    lio.dynamic_removal.grid_size: 0.2          # 体素网格大小(m), 用于空间离散化
+    lio.dynamic_removal.min_neighbors: 1        # 孤立点移除阈值, 体素邻居数<此值视为孤立点并移除
+    lio.dynamic_removal.frame_window: 1         # [method=0时有效] 时序法检查前后各N帧的占用情况
+    lio.dynamic_removal.raycast_min_hits: 1     # [method=1时有效] 射线法穿透某体素的最小次数阈值
+    lio.dynamic_removal.isolated_removal: false # 是否移除孤立点(周围邻居少的点)

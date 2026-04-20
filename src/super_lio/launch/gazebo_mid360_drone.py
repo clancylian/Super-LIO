@@ -165,7 +165,7 @@ def generate_launch_description():
         arguments=['-0.1', '0', '-0.3', deg_to_rad(0), deg_to_rad(-30), '0', 'x500_depth_0/livox_frame/mid360_lidar', 'x500_depth_0/base_link'],
         output='screen'
     )
-    ld.add_action(livox_frame_to_base_link_tf)
+    # ld.add_action(livox_frame_to_base_link_tf)
 
     # base_link_to_base_footprint_tf = Node(
     #     package='tf2_ros',

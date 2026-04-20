@@ -25,7 +25,7 @@ bool SuperLIO::set_realtime_priority(int priority)
   
   int ret = pthread_setschedparam(pthread_self(), SCHED_FIFO, &param);
   if (ret != 0) {
-    LOG(ERROR) << "Failed to set SCHED_FIFO priority " << priority 
+    LOG(WARNING) << "Failed to set SCHED_FIFO priority " << priority 
                << ", error: " << std::strerror(ret);
     return false;
   }

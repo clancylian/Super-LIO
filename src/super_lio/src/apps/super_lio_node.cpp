@@ -29,8 +29,6 @@ int main(int argc, char** argv){
   data_wrapper->setSuperLIO(lio);
   lio->init();
 
-  SuperLIO::set_realtime_priority(98);
-
   rclcpp::on_shutdown([lio]() {
     lio->saveMap();
     lio->printTimeRecord();

@@ -151,6 +151,12 @@ void SuperLIO::stateWaitMapInit()
 }
 
 void SuperLIO::process(){
+  static bool priority_set = false;
+  if (!priority_set) {
+    set_realtime_priority(98);
+    priority_set = true;
+  }
+  
   if(!data_wrapper_->sync_measure(measures_)){
     return;
   }

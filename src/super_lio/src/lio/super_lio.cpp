@@ -493,7 +493,7 @@ void SuperLIO::saveMap(){
       std::string filtered_output = save_map_dir + "/" + g_map_name;
       
       std::stringstream cmd;
-      cmd << "ros2 run super_lio dynamic_remove_node"
+      cmd << "taskset -c 0,1,2,3,4,5,6 ros2 run super_lio dynamic_remove_node"
           << " --input_dir " << pcd_folder
           << " --output_file " << filtered_output
           << " --grid_size " << g_dynamic_removal_grid_size

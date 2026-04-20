@@ -153,7 +153,7 @@ def generate_launch_description():
         arguments=['0.0', '0', '0.0', deg_to_rad(0), deg_to_rad(0), deg_to_rad(0), 'imu', 'x500_depth_0/livox_frame/mid360_lidar'],
         output='screen'
     )
-    ld.add_action(imu_to_livox_frame_tf)
+    # ld.add_action(imu_to_livox_frame_tf)
 
     # livox_frame -> base_link (机器人基坐标系到雷达坐标系的静态变换)
     # 旋转角度：pitch = 50度 (0.87266弧度)

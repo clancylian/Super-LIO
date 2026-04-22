@@ -56,18 +56,18 @@ def generate_launch_description():
 
     declare_ns_arg = DeclareLaunchArgument(
         'ns',
-        default_value='',
+        default_value='rkbot',
         description='Namespace for multi-robot support'
     )
     ns = LaunchConfiguration('ns')
     
-    ns_map_frame = PythonExpression(["'", ns, "' == '' ? 'map' : str('", ns, "/map')"])
-    ns_odom_frame = PythonExpression(["'", ns, "' == '' ? 'odom' : str('", ns, "/odom')"])
-    ns_base_frame = PythonExpression(["'", ns, "' == '' ? 'base_footprint' : str('", ns, "/base_footprint')"])
-    ns_world_frame = PythonExpression(["'", ns, "' == '' ? 'world' : str('", ns, "/world')"])
-    ns_imu_frame = PythonExpression(["'", ns, "' == '' ? 'imu' : str('", ns, "/imu')"])
-    ns_livox_frame = PythonExpression(["'", ns, "' == '' ? 'livox_frame' : str('", ns, "/livox_frame')"])
-    ns_base_link_frame = PythonExpression(["'", ns, "' == '' ? 'base_link' : str('", ns, "/base_link')"])
+    ns_map_frame = PythonExpression(["'map' if '", ns, "' == '' else str('", ns, "/map')"])
+    ns_odom_frame = PythonExpression(["'odom' if '", ns, "' == '' else str('", ns, "/odom')"])
+    ns_base_frame = PythonExpression(["'base_footprint' if '", ns, "' == '' else str('", ns, "/base_footprint')"])
+    ns_world_frame = PythonExpression(["'world' if '", ns, "' == '' else str('", ns, "/world')"])
+    ns_imu_frame = PythonExpression(["'imu' if '", ns, "' == '' else str('", ns, "/imu')"])
+    ns_livox_frame = PythonExpression(["'livox_frame' if '", ns, "' == '' else str('", ns, "/livox_frame')"])
+    ns_base_link_frame = PythonExpression(["'base_link' if '", ns, "' == '' else str('", ns, "/base_link')"])
     
     ld.add_action(declare_ns_arg)
 

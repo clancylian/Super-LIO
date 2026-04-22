@@ -56,7 +56,7 @@ def generate_launch_description():
 
     declare_ns_arg = DeclareLaunchArgument(
         'ns',
-        default_value='rkbot',
+        default_value='',
         description='Namespace for multi-robot support'
     )
     ns = LaunchConfiguration('ns')

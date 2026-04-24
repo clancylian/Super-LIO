@@ -1,4 +1,3 @@
-import os
 import launch.logging
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
@@ -206,6 +205,17 @@ def generate_launch_description():
         output='screen'
     )
     ld.add_action(livox_frame_to_base_link_tf)
+
+    # world -> basefootprint (里程计到机器人基坐标系的静态变换)
+    static_transform_world_to_base_footprint = Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='static_transform_world_to_base_footprint',
+        parameters=[{'use_sim_time': DEFAULT_USE_SIM_TIME}],
+        arguments=['0.0', '0.0', '0.0', '0.0', '0.0', '0.0', ns_world_frame, ns_base_frame],
+        output='screen'
+    )
+    ld.add_action(static_transform_world_to_base_footprint)
 
     # 根据模式添加相应的节点（按照LIO-SAM的逻辑）
     if RECORD_ONLY:

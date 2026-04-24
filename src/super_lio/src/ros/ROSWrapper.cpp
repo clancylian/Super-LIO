@@ -449,12 +449,22 @@ void ROSWrapper::setupIO(){
 void ROSWrapper::imuHandler(const sensor_msgs::msg::Imu::SharedPtr msg){
   IMUData data;
   data.secs = stampToSec(msg->header.stamp);
-  data.acc  = V3(msg->linear_acceleration.x,
-                 msg->linear_acceleration.y,
-                 msg->linear_acceleration.z);
-  data.gyr  = V3(msg->angular_velocity.x,
-                 msg->angular_velocity.y,
-                 msg->angular_velocity.z);
+
+  if (g_lidar_type == LID_TYPE::ROBOSENSE_AIRY) {
+    data.acc  = V3(-msg->linear_acceleration.y,
+                   -msg->linear_acceleration.x,
+                   -msg->linear_acceleration.z);
+    data.gyr  = V3(-msg->angular_velocity.y,
+                   -msg->angular_velocity.x,
+                   -msg->angular_velocity.z);
+  } else {
+    data.acc  = V3(msg->linear_acceleration.x,
+                   msg->linear_acceleration.y,
+                   msg->linear_acceleration.z);
+    data.gyr  = V3(msg->angular_velocity.x,
+                   msg->angular_velocity.y,
+                   msg->angular_velocity.z);
+  }
 
   if (data.secs < last_timestamp_imu_) {
     LOG(WARNING) << "imu loop back, clear buffer";
@@ -643,6 +653,65 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
           pt.x, pt.y, pt.z, pt.intensity, offset_time);
     }
     lidar_data.end_time = lidar_data.start_time + offset_time;
+    break;
+  }
+  case LID_TYPE::ROBOSENSE_AIRY:
+  {
+    bool has_ring = false;
+    bool has_timestamp = false;
+    for (const auto& field : msg->fields) {
+      if (field.name == "ring") has_ring = true;
+      if (field.name == "timestamp") has_timestamp = true;
+    }
+
+    if (has_ring && has_timestamp) {
+      pcl::PointCloud<robosenseM1_ros::Point> pl_orig;
+      pcl::fromROSMsg(*msg, pl_orig);
+      int plsize = pl_orig.size();
+      if (plsize == 0) return;
+      lidar_data.pc->reserve(plsize / g_filter_rate + 1);
+
+      double min_time = std::numeric_limits<double>::max();
+      double max_time = std::numeric_limits<double>::lowest();
+      for (int i = 0; i < plsize; ++i) {
+        double ts = pl_orig.points[i].timestamp;
+        if (ts < min_time) min_time = ts;
+        if (ts > max_time) max_time = ts;
+      }
+      lidar_data.start_time = min_time;
+
+      for (int i = 0; i < plsize; i += g_filter_rate) {
+        auto& pt = pl_orig.points[i];
+        float ros_x = -pt.y;
+        float ros_y = -pt.x;
+        float ros_z = -pt.z;
+        if (!validPoint(ros_x, ros_y, ros_z)) continue;
+        if(g_intensity_filter_en && pt.intensity < g_intensity_min) continue;
+        offset_time = pt.timestamp - min_time;
+        lidar_data.pc->emplace_back(
+            ros_x, ros_y, ros_z, pt.intensity, offset_time);
+      }
+      lidar_data.end_time = max_time;
+    } else {
+      pcl::PointCloud<pcl::PointXYZI> pl_orig;
+      pcl::fromROSMsg(*msg, pl_orig);
+      int plsize = pl_orig.size();
+      if (plsize == 0) return;
+      lidar_data.pc->reserve(plsize / g_filter_rate + 1);
+      lidar_data.start_time = stampToSec(msg->header.stamp);
+
+      for (int i = 0; i < plsize; i += g_filter_rate) {
+        auto& pt = pl_orig.points[i];
+        float ros_x = -pt.y;
+        float ros_y = -pt.x;
+        float ros_z = -pt.z;
+        if (!validPoint(ros_x, ros_y, ros_z)) continue;
+        if(g_intensity_filter_en && pt.intensity < g_intensity_min) continue;
+        lidar_data.pc->emplace_back(
+            ros_x, ros_y, ros_z, pt.intensity, 0.0);
+      }
+      lidar_data.end_time = lidar_data.start_time;
+    }
     break;
   }
   default:

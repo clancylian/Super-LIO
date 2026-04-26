@@ -7,15 +7,15 @@
     lio.map.ds_size: 0.25
     lio.map.save_interval: 500
 
-    lio.ros.lidar_topic: "/livox/lidar"
-    lio.ros.imu_topic: "/livox/imu"
+    lio.ros.lidar_topic: "livox/lidar"
+    lio.ros.imu_topic: "livox/imu"
 
     lio.sensor.lidar_type: 8
     lio.sensor.blind: 0.8
     lio.sensor.maxrange: 100.0
     lio.sensor.filter_rate: 1
     lio.sensor.enable_downsample: true
-    lio.sensor.voxel_fliter_size: 0.5
+    lio.sensor.voxel_fliter_size: 0.25
     lio.sensor.intensity_filter_en: false
     lio.sensor.intensity_min: 0.0
     lio.sensor.gravity_norm: 9.8066
@@ -51,6 +51,8 @@
     lio.output.pub_step: 1
     lio.output.footprint_pub_en: true
     lio.output.tf_base_footprint_frame: "base_footprint"
+    lio.output.world_frame: "world"
+    lio.output.imu_frame: "imu"
 
     lio.eva.timer: true
     

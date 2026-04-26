@@ -27,7 +27,7 @@ def generate_launch_description():
         from global_config import (
             ONLINE_LIDAR, DEFAULT_BAG_PATH, DEFAULT_RELIABILITY_OVERRIDE,
             DEFAULT_USE_SIM_TIME, MANUAL_BUILD_MAP, BUILD_TOOL, RECORD_ONLY,
-            NAV2_DEFAULT_PARAMS_FILE, LIVOX_MID360_CONFIG, LIVOX_MID360_CONFIG_NO_TILT
+            NAV2_DEFAULT_PARAMS_FILE, LIVOX_MID360_CONFIG, LIVOX_MID360_CONFIG_NO_TILT, DEFAULT_NAMESPACE
         )
     except ImportError as e:
         print(f"方法2导入global_config失败: {e}")
@@ -53,6 +53,23 @@ def generate_launch_description():
         lidar_mode = "OFFLINE"
 
     ld = LaunchDescription()
+
+    declare_ns_arg = DeclareLaunchArgument(
+        'ns',
+        default_value=DEFAULT_NAMESPACE,
+        description='Namespace for multi-robot support'
+    )
+    ns = LaunchConfiguration('ns')
+    
+    ns_map_frame = PythonExpression(["'map' if '", ns, "' == '' else str('", ns, "/map')"])
+    ns_odom_frame = PythonExpression(["'odom' if '", ns, "' == '' else str('", ns, "/odom')"])
+    ns_base_frame = PythonExpression(["'base_footprint' if '", ns, "' == '' else str('", ns, "/base_footprint')"])
+    ns_world_frame = PythonExpression(["'world' if '", ns, "' == '' else str('", ns, "/world')"])
+    ns_imu_frame = PythonExpression(["'imu' if '", ns, "' == '' else str('", ns, "/imu')"])
+    ns_livox_frame = PythonExpression(["'livox_frame' if '", ns, "' == '' else str('", ns, "/livox_frame')"])
+    ns_base_link_frame = PythonExpression(["'base_link' if '", ns, "' == '' else str('", ns, "/base_link')"])
+    
+    ld.add_action(declare_ns_arg)
 
     declare_rviz_arg = DeclareLaunchArgument(
         'rviz',
@@ -108,9 +125,25 @@ def generate_launch_description():
         executable='super_lio_node',
         name='super_lio_node',
         output='screen',
-        parameters=[config_yaml, {'use_sim_time': use_sim_time}],
-        prefix=['taskset -c 7'],   # 绑定 CPU 7
-        arguments=['--ros-args', '--log-level', 'info']
+        parameters=[
+            config_yaml, 
+            {'use_sim_time': DEFAULT_USE_SIM_TIME},
+            {'lio.output.tf_base_footprint_frame': ns_base_frame},
+            {'lio.output.world_frame': ns_world_frame},
+            {'lio.output.imu_frame': ns_imu_frame},
+        ],
+        prefix=['taskset -c 7'],
+        arguments=['--ros-args', '--log-level', 'info'],
+        remappings=[
+            ('/lio/odom', 'lio/odom'),
+            ('/lio/imu/odom', 'lio/imu/odom'),
+            ('/lio/robo/odom', 'lio/robo/odom'),
+            ('/lio/path', 'lio/path'),
+            ('/lio/cloud_world', 'lio/cloud_world'),
+            ('/lio/body/cloud', 'lio/body/cloud'),
+            ('/tf', '/tf'),
+            ('/tf_static', '/tf_static'),
+        ]
     )
     ld.add_action(super_lio_node)
 
@@ -120,7 +153,7 @@ def generate_launch_description():
         executable='static_transform_publisher',
         name='static_transform_map_to_odom',
         parameters=[{'use_sim_time': DEFAULT_USE_SIM_TIME}],
-        arguments=['0.0', '0.0', '0.0', '0.0', '0.0', '0.0', 'map', 'odom'],
+        arguments=['0.0', '0.0', '0.0', '0.0', '0.0', '0.0', ns_map_frame, ns_odom_frame],
         output='screen'
     )
     ld.add_action(static_transform_map_to_odom)
@@ -130,18 +163,18 @@ def generate_launch_description():
         executable='static_transform_publisher',
         name='static_transform_odom_to_world',
         parameters=[{'use_sim_time': DEFAULT_USE_SIM_TIME}],
-        arguments=['0.0', '0.0', '0.0', '0.0', '0.0', '0.0', 'odom', 'world'],
+        arguments=['0.0', '0.0', '0.0', '0.0', '0.0', '0.0', ns_odom_frame, ns_world_frame],
         output='screen'
     )
     ld.add_action(static_transform_odom_to_world)
 
-    # # world -> imu (里程计到机器人基坐标系的静态变换)
+    # world -> imu (里程计到机器人基坐标系的静态变换)
     static_transform_world_to_imu = Node(
         package='tf2_ros',
         executable='static_transform_publisher',
         name='static_transform_world_to_imu',
         parameters=[{'use_sim_time': DEFAULT_USE_SIM_TIME}],
-        arguments=['0.0', '0.0', '0.0', '0', '0', '0', 'world', 'imu'],
+        arguments=['0.0', '0.0', '0.0', '0.0', '0.0', '0.0', ns_world_frame, ns_imu_frame],
         output='screen'
     )
     ld.add_action(static_transform_world_to_imu)
@@ -149,33 +182,35 @@ def generate_launch_description():
     imu_to_livox_frame_tf = Node(
         package='tf2_ros',
         executable='static_transform_publisher',
+        name='imu_to_livox_frame_tf',
         parameters=[{'use_sim_time': DEFAULT_USE_SIM_TIME}],
-        arguments=['0.0', '0', '0.0', deg_to_rad(0), deg_to_rad(0), deg_to_rad(0), 'imu', 'livox_frame'],
+        arguments=['0.0', '0', '0.0', '0', '0.0', '0', ns_imu_frame, ns_livox_frame],
         output='screen'
     )
     ld.add_action(imu_to_livox_frame_tf)
 
     # livox_frame -> base_link (机器人基坐标系到雷达坐标系的静态变换)
-    # 旋转角度：pitch = 50度 (0.87266弧度)
+    # 旋转角度：pitch = 30度 (0.5236弧度)
     livox_frame_to_base_link_tf = Node(
         package='tf2_ros',
         executable='static_transform_publisher',
+        name='livox_frame_to_base_link_tf',
         parameters=[{'use_sim_time': DEFAULT_USE_SIM_TIME}],
-        # arguments=['0.1', '0', '0.1', '0', '0.0', '0', 'base_link', 'livox_frame'],
-        arguments=['-0.07', '0', '-0.1', deg_to_rad(0), deg_to_rad(0), '0', 'livox_frame', 'base_link'],
+        arguments=['-0.1', '0', '-0.1', '0', str(deg_to_rad(-30)), '0', 'mid360_robot/livox_frame/lidar', ns_base_link_frame],
         output='screen'
     )
-    ld.add_action(livox_frame_to_base_link_tf) 
+    ld.add_action(livox_frame_to_base_link_tf)
 
-    # base_link_to_base_footprint_tf = Node(
-    #     package='tf2_ros',
-    #     executable='static_transform_publisher',
-    #     name='base_link_to_base_footprint_tf',
-    #     parameters=[{'use_sim_time': DEFAULT_USE_SIM_TIME}],
-    #     arguments=['0.0', '0', '0.0', '0', '0.0', '0', 'world', 'base_footprint'],
-    #     output='screen'
-    # )
-    # ld.add_action(base_link_to_base_footprint_tf)
+    # world -> basefootprint (里程计到机器人基坐标系的静态变换)
+    static_transform_world_to_base_footprint = Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='static_transform_world_to_base_footprint',
+        parameters=[{'use_sim_time': DEFAULT_USE_SIM_TIME}],
+        arguments=['0.0', '0.0', '0.0', '0.0', '0.0', '0.0', ns_world_frame, ns_base_frame],
+        output='screen'
+    )
+    # ld.add_action(static_transform_world_to_base_footprint)
 
     # 根据模式添加相应的节点（按照LIO-SAM的逻辑）
     if RECORD_ONLY:

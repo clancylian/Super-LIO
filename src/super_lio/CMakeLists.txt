@@ -23,7 +23,6 @@ find_package(sensor_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(pcl_ros REQUIRED)
-find_package(livox_ros_driver2 REQUIRED)
 
 find_package(Eigen3 REQUIRED NO_MODULE)
 find_package(PCL REQUIRED)
@@ -34,6 +33,8 @@ find_package(basic REQUIRED)
 rosidl_generate_interfaces(${PROJECT_NAME}
   msg/CloudPose.msg
   msg/CloudPose2.msg
+  msg/CustomPoint.msg
+  msg/CustomMsg.msg
   DEPENDENCIES std_msgs sensor_msgs geometry_msgs
 )
 
@@ -65,7 +66,6 @@ ament_target_dependencies(lio PUBLIC
   visualization_msgs
   nav_msgs
   pcl_ros
-  livox_ros_driver2
   basic
   rosidl_default_runtime
 )

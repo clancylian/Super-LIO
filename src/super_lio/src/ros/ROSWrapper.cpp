@@ -277,7 +277,7 @@ void LoadParamFromRos(rclcpp::Node& node)
 }
 
 
-void livox2pcl(const livox_ros_driver2::msg::CustomMsg::SharedPtr& msg, CloudPtr& point_cloud){
+void livox2pcl(const super_lio::msg::CustomMsg::SharedPtr& msg, CloudPtr& point_cloud){
   point_cloud->clear();
   CloudPtr cloud_full(new PointCloudType());
   int plsize = msg->point_num;
@@ -402,7 +402,7 @@ void ROSWrapper::setupIO(){
 
   if (g_lidar_type == LID_TYPE::LIVOX) {
     sub_lidar_ =
-        this->create_subscription<livox_ros_driver2::msg::CustomMsg>(
+        this->create_subscription<super_lio::msg::CustomMsg>(
             g_lidar_topic,
             lidar_qos,
             std::bind(&ROSWrapper::livoxHandler, this, std::placeholders::_1),
@@ -528,7 +528,7 @@ void ROSWrapper::imuHandler(const sensor_msgs::msg::Imu::SharedPtr msg){
 }
 
 
-void ROSWrapper::livoxHandler(const livox_ros_driver2::msg::CustomMsg::SharedPtr msg){
+void ROSWrapper::livoxHandler(const super_lio::msg::CustomMsg::SharedPtr msg){
   if(msg->point_num < 10) return;
   LidarData lidar_data;
   std::size_t ptsize = msg->point_num;

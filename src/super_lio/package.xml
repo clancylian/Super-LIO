@@ -16,7 +16,6 @@
   <depend>visualization_msgs</depend>
   <depend>pcl_ros</depend>
   <depend>nav_msgs</depend>
-  <depend>livox_ros_driver2</depend>
   <depend>basic</depend>
 
   <build_depend>rosidl_default_generators</build_depend>

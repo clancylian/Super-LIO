@@ -24,7 +24,7 @@
 #include <geometry_msgs/msg/point.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
-#include <livox_ros_driver2/msg/custom_msg.hpp>
+#include <super_lio/msg/custom_msg.hpp>
 #include <std_srvs/srv/trigger.hpp>
 #include <pcl_conversions/pcl_conversions.h>
 
@@ -47,7 +47,7 @@ namespace LI2Sup{
 
 void LoadParamFromRos(rclcpp::Node& node);
 
-void livox2pcl(const livox_ros_driver2::msg::CustomMsg::SharedPtr& msg, BASIC::CloudPtr& point_cloud);
+void livox2pcl(const super_lio::msg::CustomMsg::SharedPtr& msg, BASIC::CloudPtr& point_cloud);
 
 class ROSWrapper : public rclcpp::Node {
 public:
@@ -95,7 +95,7 @@ public:
 
 private:
   void imuHandler(const sensor_msgs::msg::Imu::SharedPtr msg);
-  void livoxHandler(const livox_ros_driver2::msg::CustomMsg::SharedPtr msg);
+  void livoxHandler(const super_lio::msg::CustomMsg::SharedPtr msg);
   void stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr msg);
 
   void setupParams();
@@ -105,7 +105,7 @@ private:
 private:
   rclcpp::CallbackGroup::SharedPtr cb_sensor_;
   rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr sub_imu_;
-  rclcpp::Subscription<livox_ros_driver2::msg::CustomMsg>::SharedPtr sub_lidar_;
+  rclcpp::Subscription<super_lio::msg::CustomMsg>::SharedPtr sub_lidar_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr sub_lidar_std_;
 
   // 保存地图服务

@@ -37,6 +37,7 @@ namespace LI2Sup{
   extern std::string g_save_map_dir;
   extern float g_map_ds_size;
   extern int   g_pcd_save_interval;
+  extern std::string g_pcd_prefix;
   
   extern std::string g_imu_topic;
   extern std::string g_lidar_topic;
@@ -93,6 +94,10 @@ namespace LI2Sup{
 
   /// for planner
   extern bool g_planner_enable;
+
+  /// lio only undistort mode
+  extern bool g_lio_only_undistort;
+  extern std::string g_lio_only_undistort_frame;
 
   /// Define the hybrid residual formulation.
   enum ResidualType{

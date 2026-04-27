@@ -20,6 +20,7 @@ namespace LI2Sup{
   string g_map_name;
   float  g_map_ds_size;
   int    g_pcd_save_interval;
+  string g_pcd_prefix;
   
   string g_imu_topic;
   string g_lidar_topic;
@@ -76,6 +77,10 @@ namespace LI2Sup{
 
   /// for planner
   bool g_planner_enable;
+
+  /// lio only undistort mode
+  bool g_lio_only_undistort = false;
+  string g_lio_only_undistort_frame = "world";
 
   ResidualType g_residual_type = PROB;
 

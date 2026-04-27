@@ -50,6 +50,7 @@ protected:
     BASIC::CloudPtr body_pc;
     bool has_world_pc = false;
     bool has_body_pc = false;
+    bool is_undistort_only = false;
   };
 
   struct SaveData {

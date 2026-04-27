@@ -39,6 +39,12 @@ void LoadParamFromRos(rclcpp::Node& node)
   node.declare_parameter<int>("lio.map.save_interval", 1);
   node.get_parameter("lio.map.save_interval", g_pcd_save_interval);
 
+  node.declare_parameter<std::string>("lio.map.pcd_prefix", "");
+  node.get_parameter("lio.map.pcd_prefix", g_pcd_prefix);
+
+  LOG(INFO) << GREEN << " ---> [Param] map/pcd_prefix: "
+            << g_pcd_prefix << RESET;
+
   node.declare_parameter<std::string>("lio.ros.lidar_topic", "/lidar");
   node.get_parameter("lio.ros.lidar_topic", g_lidar_topic);
 
@@ -278,6 +284,18 @@ void LoadParamFromRos(rclcpp::Node& node)
 
   LOG(INFO) << GREEN << " ---> [Param] dynamic_removal/isolated_removal: "
             << (g_dynamic_removal_isolated_removal ? "true" : "false") << RESET;
+
+  // ================= lio only undistort mode =================
+  node.declare_parameter<bool>("lio.lio_only_undistort", false);
+  node.get_parameter("lio.lio_only_undistort", g_lio_only_undistort);
+
+  node.declare_parameter<std::string>("lio.lio_only_undistort_frame", "world");
+  node.get_parameter("lio.lio_only_undistort_frame", g_lio_only_undistort_frame);
+
+  LOG(INFO) << GREEN << " ---> [Param] lio_only_undistort: "
+            << (g_lio_only_undistort ? "true" : "false") << RESET;
+  LOG(INFO) << GREEN << " ---> [Param] lio_only_undistort_frame: "
+            << g_lio_only_undistort_frame << RESET;
 
   LOG(INFO) << GREEN << " ---> [Params]: Load from ROS2 parameter server."
             << RESET;
@@ -884,6 +902,15 @@ void ROSWrapper::pub_cloud_body(const CloudPtr& pc, double time){
   sensor_msgs::msg::PointCloud2 cloud;
   pcl::toROSMsg(*pc, cloud);
   cloud.header.frame_id = g_imu_frame;
+  cloud.header.stamp = toRosTime(time);
+  pub_cloud_body_->publish(cloud);
+}
+
+
+void ROSWrapper::pub_cloud_undistort_only(const CloudPtr& pc, double time){
+  sensor_msgs::msg::PointCloud2 cloud;
+  pcl::toROSMsg(*pc, cloud);
+  cloud.header.frame_id = g_lio_only_undistort_frame;
   cloud.header.stamp = toRosTime(time);
   pub_cloud_body_->publish(cloud);
 }

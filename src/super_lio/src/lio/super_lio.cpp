@@ -143,6 +143,12 @@ void SuperLIO::stateWaitKFInit()
 
 void SuperLIO::stateWaitMapInit()
 {
+  if(g_lio_only_undistort){
+    kf_->init_ = true;
+    state_fn_ = &SuperLIO::stateProcess;
+    LOG(INFO) << GREEN << " ---> [SuperLIO]: Undistort-only mode, skip map init" << RESET;
+    return;
+  }
   if (map_init()) {
     kf_->init_ = true;
     state_fn_ = &SuperLIO::stateProcess;
@@ -259,6 +265,18 @@ bool SuperLIO::map_init(){
 
 void SuperLIO::stateProcess(){
   frame_num_++;
+  if(g_lio_only_undistort){
+    if(g_time_eva){
+      time_record_.Evaluate([this](){Propagation_Undistort();}, "[Undistort]");
+      time_record_.Evaluate([this]() { DownSample(); }, "[DownSample]");
+    }else{
+      Propagation_Undistort();
+      DownSample();
+    }
+    Output();
+    caceData();
+    return;
+  }
   if(g_time_eva){
     time_record_.Evaluate([this](){Propagation_Undistort();}, "[Undistort]");
     time_record_.Evaluate([this]() { DownSample(); }, "[DownSample]");
@@ -282,10 +300,18 @@ void SuperLIO::caceData(){
   transformation.block<3, 3>(0, 0) = state.R.R_.cast<float>();
   transformation.block<3, 1>(0, 3) = state.p.cast<float>();
 
-  if(g_if_filter){
-    pcl::transformPointCloud(*ds_undistort_, *world_pc_, transformation);
+  if(g_lio_only_undistort){
+    if(g_if_filter){
+      *world_pc_ = *ds_undistort_;
+    }else{
+      *world_pc_ = *scan_undistort_full_;
+    }
   }else{
-    pcl::transformPointCloud(*scan_undistort_full_, *world_pc_, transformation);
+    if(g_if_filter){
+      pcl::transformPointCloud(*ds_undistort_, *world_pc_, transformation);
+    }else{
+      pcl::transformPointCloud(*scan_undistort_full_, *world_pc_, transformation);
+    }
   }
 
   static int scan_wait_num = 0;
@@ -364,13 +390,13 @@ void SuperLIO::SaveThread(){
       if (!save_map_dir.empty() && save_map_dir[0] != '/') {
         save_map_dir = g_root_dir + save_map_dir;
       }
-      std::string map_name(std::string(save_map_dir + "/PCD/scans_") + std::to_string(data.pcd_index) +
+      std::string map_name(std::string(save_map_dir + "/PCD/" + g_pcd_prefix + "scans_") + std::to_string(data.pcd_index) +
                                  std::string(".pcd"));
-      LOG(INFO) << GREEN << " ---> current scan saved to /PCD/scans_" << data.pcd_index 
+      LOG(INFO) << GREEN << " ---> current scan saved to /PCD/" << g_pcd_prefix << "scans_" << data.pcd_index 
                 << "  size:  " << data.cloud_to_save->size() << RESET;
       pcl::io::savePCDFileBinary(map_name, *data.cloud_to_save);
       
-      std::string odom_name(std::string(save_map_dir + "/PCD/scans_") + std::to_string(data.pcd_index) +
+      std::string odom_name(std::string(save_map_dir + "/PCD/" + g_pcd_prefix + "scans_") + std::to_string(data.pcd_index) +
                                  std::string(".txt"));
       std::ofstream odom_file(odom_name);
       if(odom_file.is_open()){
@@ -414,7 +440,7 @@ void SuperLIO::ProcessCaceMap(){
   int count = 0;
   for (const auto& entry : fs::directory_iterator(pcd_folder)) {
     if (entry.path().extension() == ".pcd" &&
-      entry.path().filename().string().find("scans_") != std::string::npos) {
+      entry.path().filename().string().find(g_pcd_prefix + "scans_") != std::string::npos) {
       PointCloudType::Ptr tmp_cloud(new PointCloudType());
       if (pcl::io::loadPCDFile<PointType>(entry.path().string(), *tmp_cloud) == 0) {
         *merged_map += *tmp_cloud;
@@ -762,38 +788,56 @@ void SuperLIO::Output(){
   
   OutputData output_data;
   output_data.state = state;
+  output_data.is_undistort_only = g_lio_only_undistort;
 
-  Eigen::Matrix4f transformation = Eigen::Matrix4f::Identity();
-  transformation.block<3, 3>(0, 0) = state.R.R_.cast<float>();
-  transformation.block<3, 1>(0, 3) = state.p.cast<float>();
-
-  if(g_visual_map){
-    static int count = -1;
-    count++;
-    if(count % g_pub_step == 0){
-      count = 0;
-      output_data.world_pc.reset(new PointCloudType());
-      if(g_visual_dense){
-        pcl::transformPointCloud(*scan_undistort_full_, *output_data.world_pc, transformation);
-      }else{
-        pcl::transformPointCloud(*ds_undistort_, *output_data.world_pc, transformation);
+  if(g_lio_only_undistort){
+    if(g_visual_map_body){
+      static int count_body = -1;
+      count_body++;
+      if(count_body % g_pub_step == 0){
+        count_body = 0;
+        output_data.body_pc.reset(new PointCloudType());
+        if(g_visual_dense_body){
+          *output_data.body_pc = *scan_undistort_full_;
+        }else{
+          *output_data.body_pc = *ds_undistort_;
+        }
+        output_data.has_body_pc = true;
       }
-      output_data.has_world_pc = true;
     }
-  }
+  }else{
+    Eigen::Matrix4f transformation = Eigen::Matrix4f::Identity();
+    transformation.block<3, 3>(0, 0) = state.R.R_.cast<float>();
+    transformation.block<3, 1>(0, 3) = state.p.cast<float>();
 
-  if(g_visual_map_body){
-    static int count_body = -1;
-    count_body++;
-    if(count_body % g_pub_step == 0){
-      count_body = 0;
-      output_data.body_pc.reset(new PointCloudType());
-      if(g_visual_dense_body){
-        *output_data.body_pc = *scan_undistort_full_;
-      }else{
-        *output_data.body_pc = *ds_undistort_;
+    if(g_visual_map){
+      static int count = -1;
+      count++;
+      if(count % g_pub_step == 0){
+        count = 0;
+        output_data.world_pc.reset(new PointCloudType());
+        if(g_visual_dense){
+          pcl::transformPointCloud(*scan_undistort_full_, *output_data.world_pc, transformation);
+        }else{
+          pcl::transformPointCloud(*ds_undistort_, *output_data.world_pc, transformation);
+        }
+        output_data.has_world_pc = true;
       }
-      output_data.has_body_pc = true;
+    }
+
+    if(g_visual_map_body){
+      static int count_body = -1;
+      count_body++;
+      if(count_body % g_pub_step == 0){
+        count_body = 0;
+        output_data.body_pc.reset(new PointCloudType());
+        if(g_visual_dense_body){
+          *output_data.body_pc = *scan_undistort_full_;
+        }else{
+          *output_data.body_pc = *ds_undistort_;
+        }
+        output_data.has_body_pc = true;
+      }
     }
   }
 
@@ -828,14 +872,20 @@ void SuperLIO::OutputThread(){
       output_queue_.pop();
     }
     
-    data_wrapper_->pub_odom(data.state);
+    if(!data.is_undistort_only){
+      data_wrapper_->pub_odom(data.state);
+    }
     
     if(data.has_world_pc && data.world_pc){
       data_wrapper_->pub_cloud_world(data.world_pc, data.state.timestamp);
     }
     
     if(data.has_body_pc && data.body_pc){
-      data_wrapper_->pub_cloud_body(data.body_pc, data.state.timestamp);
+      if(data.is_undistort_only){
+        data_wrapper_->pub_cloud_undistort_only(data.body_pc, data.state.timestamp);
+      }else{
+        data_wrapper_->pub_cloud_body(data.body_pc, data.state.timestamp);
+      }
     }
   }
 }

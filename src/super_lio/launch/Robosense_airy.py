@@ -107,7 +107,7 @@ def generate_launch_description():
         executable='static_transform_publisher',
         name='static_transform_odom_to_world',
         parameters=[{'use_sim_time': DEFAULT_USE_SIM_TIME}],
-        arguments=['0.0', '0.0', '0.0', '0.0', '0.0', '0.0', ns_odom_frame, ns_world_frame],
+        arguments=['0.36615', '0.0', '0.0', '0.0', str(deg_to_rad(90)), '0.0', ns_odom_frame, ns_world_frame],
         output='screen'
     )
     ld.add_action(static_transform_odom_to_world)
@@ -122,6 +122,38 @@ def generate_launch_description():
     )
     ld.add_action(static_transform_world_to_imu)
 
+    body_to_rslidar_head_tf = Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='body_to_rslidar_head_tf',
+        parameters=[{'use_sim_time': DEFAULT_USE_SIM_TIME}],
+        arguments=['0.0', '0', '0.0', '0', '0.0', '0', ns_imu_frame, 'rslidar_head'],
+        output='screen'
+    )
+    ld.add_action(body_to_rslidar_head_tf)
+
+    # rslidar_head -> base_link (机器人基坐标系到雷达坐标系的静态变换)
+    rslidar_head_to_base_link_tf = Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='rslidar_head_to_base_link_tf',
+        parameters=[{'use_sim_time': DEFAULT_USE_SIM_TIME}],
+        arguments=['0', '0', '-0.36615', '0.0', str(deg_to_rad(-90)), '0', 'rslidar_head', ns_base_link_frame],
+        output='screen'
+    )
+    ld.add_action(rslidar_head_to_base_link_tf)
+
+    # rslidar_head -> rslidar_tail (雷达到雷达的静态变换)
+    rslidar_head_to_rslidar_tail_tf = Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='rslidar_head_to_rslidar_tail_tf',
+        parameters=[{'use_sim_time': DEFAULT_USE_SIM_TIME}],
+        arguments=['0', '0', '-0.7323', str(deg_to_rad(180)), str(deg_to_rad(180)), str(deg_to_rad(0)), 'rslidar_head', 'rslidar_tail'],
+        output='screen'
+    )
+    ld.add_action(rslidar_head_to_rslidar_tail_tf)
+
     static_transform_world_to_base_footprint = Node(
         package='tf2_ros',
         executable='static_transform_publisher',
@@ -130,6 +162,6 @@ def generate_launch_description():
         arguments=['0.0', '0.0', '0.0', '0.0', '0.0', '0.0', ns_world_frame, ns_base_frame],
         output='screen'
     )
-    ld.add_action(static_transform_world_to_base_footprint)
+    # ld.add_action(static_transform_world_to_base_footprint)
 
     return ld

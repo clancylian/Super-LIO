@@ -29,12 +29,19 @@ find_package(PCL REQUIRED)
 find_package(Glog REQUIRED)
 find_package(basic REQUIRED)
 
+find_package(livox_ros_driver2 QUIET)
+if(livox_ros_driver2_FOUND)
+  message(STATUS "livox_ros_driver2 found, enabling Livox support")
+  set(LIVOX_SUPPORT ON)
+else()
+  message(STATUS "livox_ros_driver2 not found, disabling Livox support")
+  set(LIVOX_SUPPORT OFF)
+endif()
+
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   msg/CloudPose.msg
   msg/CloudPose2.msg
-  msg/CustomPoint.msg
-  msg/CustomMsg.msg
   DEPENDENCIES std_msgs sensor_msgs geometry_msgs
 )
 
@@ -69,6 +76,11 @@ ament_target_dependencies(lio PUBLIC
   basic
   rosidl_default_runtime
 )
+
+if(LIVOX_SUPPORT)
+  ament_target_dependencies(lio PUBLIC livox_ros_driver2)
+  target_compile_definitions(lio PUBLIC LIVOX_SUPPORT=1)
+endif()
 
 target_link_libraries(lio PUBLIC
   Eigen3::Eigen

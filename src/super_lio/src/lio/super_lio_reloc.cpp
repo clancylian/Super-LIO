@@ -200,7 +200,7 @@ bool SuperLIOReLoc::kf_init(){
 
 
   pcl::PointCloud<pcl::PointXYZI>::Ptr tmp_src(new pcl::PointCloud<pcl::PointXYZI>());
-  pcl::transformPointCloud(*init_obs_data_, *tmp_src, g_lidar_imu.matrix().cast<float>());
+  pcl::transformPointCloud(*init_obs_data_, *tmp_src, Eigen::Matrix4f::Identity());
 
   pcl::NormalDistributionsTransform<pcl::PointXYZI, pcl::PointXYZI> ndt;
   ndt.setTransformationEpsilon(1e-4);

@@ -3,6 +3,10 @@
 #include "geometry_msgs/msg/pose_with_covariance_stamped.hpp"
 #include "lio/super_lio.h"
 
+#ifdef LIVOX_SUPPORT
+#include "livox_ros_driver2/msg/custom_msg.hpp"
+#endif
+
 
 using namespace BASIC;
 
@@ -146,6 +150,9 @@ void LoadParamFromRos(rclcpp::Node& node)
   node.declare_parameter<bool>("lio.kf.kf_align_gravity", false);
   node.get_parameter("lio.kf.kf_align_gravity", g_kf_align_gravity);
 
+  node.declare_parameter<int>("lio.kf.ref_gravity_axis", 2);
+  node.get_parameter("lio.kf.ref_gravity_axis", g_ref_gravity_axis);
+
   node.declare_parameter<double>("lio.kf.kf_quit_eps", 0.0);
   node.get_parameter("lio.kf.kf_quit_eps", g_kf_quit_eps);
 
@@ -277,7 +284,8 @@ void LoadParamFromRos(rclcpp::Node& node)
 }
 
 
-void livox2pcl(const super_lio::msg::CustomMsg::SharedPtr& msg, CloudPtr& point_cloud){
+#ifdef LIVOX_SUPPORT
+void livox2pcl(const livox_ros_driver2::msg::CustomMsg::SharedPtr& msg, CloudPtr& point_cloud){
   point_cloud->clear();
   CloudPtr cloud_full(new PointCloudType());
   int plsize = msg->point_num;
@@ -318,6 +326,7 @@ void livox2pcl(const super_lio::msg::CustomMsg::SharedPtr& msg, CloudPtr& point_
     }
   }
 }
+#endif
 
 
 std::string lidarTypeToString(int type) {
@@ -400,14 +409,17 @@ void ROSWrapper::setupIO(){
       std::bind(&ROSWrapper::imuHandler, this, std::placeholders::_1),
       sub_opt);
 
+#ifdef LIVOX_SUPPORT
   if (g_lidar_type == LID_TYPE::LIVOX) {
     sub_lidar_ =
-        this->create_subscription<super_lio::msg::CustomMsg>(
+        this->create_subscription<livox_ros_driver2::msg::CustomMsg>(
             g_lidar_topic,
             lidar_qos,
             std::bind(&ROSWrapper::livoxHandler, this, std::placeholders::_1),
             sub_opt);
-  } else {
+  } else
+#endif
+  {
     sub_lidar_std_ =
         this->create_subscription<sensor_msgs::msg::PointCloud2>(
             g_lidar_topic,
@@ -450,21 +462,16 @@ void ROSWrapper::imuHandler(const sensor_msgs::msg::Imu::SharedPtr msg){
   IMUData data;
   data.secs = stampToSec(msg->header.stamp);
 
-  if (g_lidar_type == LID_TYPE::ROBOSENSE_AIRY) {
-    data.acc  = V3(-msg->linear_acceleration.y,
-                   -msg->linear_acceleration.x,
-                   -msg->linear_acceleration.z);
-    data.gyr  = V3(-msg->angular_velocity.y,
-                   -msg->angular_velocity.x,
-                   -msg->angular_velocity.z);
-  } else {
-    data.acc  = V3(msg->linear_acceleration.x,
-                   msg->linear_acceleration.y,
-                   msg->linear_acceleration.z);
-    data.gyr  = V3(msg->angular_velocity.x,
-                   msg->angular_velocity.y,
-                   msg->angular_velocity.z);
-  }
+  V3 acc_raw(msg->linear_acceleration.x,
+             msg->linear_acceleration.y,
+             msg->linear_acceleration.z);
+  V3 gyr_raw(msg->angular_velocity.x,
+             msg->angular_velocity.y,
+             msg->angular_velocity.z);
+
+  M3 R_IMU_to_Lidar = g_lidar_imu.R_.transpose();
+  data.acc = R_IMU_to_Lidar * acc_raw;
+  data.gyr = R_IMU_to_Lidar * gyr_raw;
 
   if (data.secs < last_timestamp_imu_) {
     LOG(WARNING) << "imu loop back, clear buffer";
@@ -528,7 +535,8 @@ void ROSWrapper::imuHandler(const sensor_msgs::msg::Imu::SharedPtr msg){
 }
 
 
-void ROSWrapper::livoxHandler(const super_lio::msg::CustomMsg::SharedPtr msg){
+#ifdef LIVOX_SUPPORT
+void ROSWrapper::livoxHandler(const livox_ros_driver2::msg::CustomMsg::SharedPtr msg){
   if(msg->point_num < 10) return;
   LidarData lidar_data;
   std::size_t ptsize = msg->point_num;
@@ -552,6 +560,7 @@ void ROSWrapper::livoxHandler(const super_lio::msg::CustomMsg::SharedPtr msg){
   lidar_data.end_time   = lidar_data.start_time + offset_time;
   lidar_buffer_.push_back(lidar_data);
 }
+#endif
 
 
 void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr msg){

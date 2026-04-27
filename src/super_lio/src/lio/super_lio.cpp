@@ -181,7 +181,13 @@ bool SuperLIO::kf_init(){
   }
 
   V3 gravity = - mean_acce * g_gravity_norm / mean_acce.norm();
-  V3 ref_gravity(0, 0, - g_gravity_norm);
+  V3 ref_gravity;
+  switch(g_ref_gravity_axis) {
+    case 0:  ref_gravity = V3(g_gravity_norm, 0, 0); break;   // +X
+    case 1:  ref_gravity = V3(0, g_gravity_norm, 0); break;   // +Y
+    case 2:  
+    default: ref_gravity = V3(0, 0, -g_gravity_norm); break;  // -Z (default)
+  }
   M3 init_rot = Quat::FromTwoVectors(gravity, ref_gravity).toRotationMatrix();
   V3 n = init_rot.col(0);
   double yaw = atan2(n(1), n(0));
@@ -226,7 +232,7 @@ bool SuperLIO::map_init(){
   std::size_t ptsize = measures_.lidar.pc->size();
   points_world_v3_.resize(ptsize);
 
-  const SE3 transform = sys_init_pose_ * g_lidar_imu;
+  const SE3 transform = sys_init_pose_;
 
   tbb::parallel_for(
     tbb::blocked_range<size_t>(0, ptsize),
@@ -567,8 +573,6 @@ void SuperLIO::Propagation_Undistort(){
     propagate_states_.emplace_back(kf_->GetDynamicState());
   }
 
-  static const M3 TLI_R = g_lidar_imu.R_;
-  static const V3 TLI_t = g_lidar_imu.t_;
   const SE3 T_end = kf_->GetSE3();
   const M3  R_inv = T_end.R_.transpose();
   const V3  T_end_t = T_end.t_;
@@ -588,11 +592,9 @@ void SuperLIO::Propagation_Undistort(){
       pt_full.intensity = pt.intensity;
       double query_time = start_time + pt.offset_time;
       if (query_time > propagate_states_.back().time) {
-        V3 raw(pt.x, pt.y, pt.z);
-        V3 eigen_point = TLI_R * raw + TLI_t;
-        pt_full.x = eigen_point[0];
-        pt_full.y = eigen_point[1];
-        pt_full.z = eigen_point[2];
+        pt_full.x = pt.x;
+        pt_full.y = pt.y;
+        pt_full.z = pt.z;
         continue;
       }
       auto match_iter = propagate_states_.begin();
@@ -615,7 +617,7 @@ void SuperLIO::Propagation_Undistort(){
       M3 R_i = Quat(R_h).slerp(s, Quat(R_t)).toRotationMatrix();
       V3 t_ei(p_h + v_h * dt + 0.5 * acc_t * dt * dt - T_end_t);
       V3 raw(pt.x, pt.y, pt.z);
-      V3 eigen_point = R_inv * (R_i * (TLI_R * raw + TLI_t) + t_ei);
+      V3 eigen_point = R_inv * (R_i * raw + t_ei);
       pt_full.x = eigen_point[0];
       pt_full.y = eigen_point[1];
       pt_full.z = eigen_point[2];

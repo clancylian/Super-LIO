@@ -69,6 +69,7 @@ namespace LI2Sup{
   extern int g_kf_type;            // 1: ESKF, 2: InESKF.
   extern int g_kf_max_iterations;
   extern bool g_kf_align_gravity;
+  extern int g_ref_gravity_axis;   // 0: +X, 1: +Y, 2: -Z (default)
   extern double g_kf_quit_eps;
 
   /// submaps

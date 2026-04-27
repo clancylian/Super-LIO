@@ -682,9 +682,9 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
 
       for (int i = 0; i < plsize; i += g_filter_rate) {
         auto& pt = pl_orig.points[i];
-        float ros_x = -pt.y;
-        float ros_y = -pt.x;
-        float ros_z = -pt.z;
+        float ros_x = pt.x;
+        float ros_y = pt.y;
+        float ros_z = pt.z;
         if (!validPoint(ros_x, ros_y, ros_z)) continue;
         if(g_intensity_filter_en && pt.intensity < g_intensity_min) continue;
         offset_time = pt.timestamp - min_time;
@@ -702,9 +702,9 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
 
       for (int i = 0; i < plsize; i += g_filter_rate) {
         auto& pt = pl_orig.points[i];
-        float ros_x = -pt.y;
-        float ros_y = -pt.x;
-        float ros_z = -pt.z;
+        float ros_x = pt.x;
+        float ros_y = pt.y;
+        float ros_z = pt.z;
         if (!validPoint(ros_x, ros_y, ros_z)) continue;
         if(g_intensity_filter_en && pt.intensity < g_intensity_min) continue;
         lidar_data.pc->emplace_back(

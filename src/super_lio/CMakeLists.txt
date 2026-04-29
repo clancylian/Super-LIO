@@ -28,6 +28,7 @@ find_package(Eigen3 REQUIRED NO_MODULE)
 find_package(PCL REQUIRED)
 find_package(Glog REQUIRED)
 find_package(basic REQUIRED)
+find_package(OpenMP REQUIRED)
 
 find_package(livox_ros_driver2 QUIET)
 if(livox_ros_driver2_FOUND)
@@ -108,6 +109,7 @@ target_link_libraries(dynamic_remove_node
   ${PCL_LIBRARIES}
   glog
   pthread
+  OpenMP::OpenMP_CXX
 )
 
 install(TARGETS

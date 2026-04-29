@@ -111,6 +111,48 @@ void SuperLIO::init(){
   output_thread_ = std::thread(&SuperLIO::OutputThread, this);
 
   if(g_save_map){
+    namespace fs = std::filesystem;
+    
+    std::string save_map_dir = g_save_map_dir;
+    if (!save_map_dir.empty() && save_map_dir[0] != '/') {
+      save_map_dir = g_root_dir + save_map_dir;
+    }
+    
+    std::string pcd_folder = save_map_dir + "/PCD";
+    
+    if(fs::exists(pcd_folder)){
+      int deleted_count = 0;
+      for(const auto& entry : fs::directory_iterator(pcd_folder)){
+        std::string filename = entry.path().filename().string();
+        if(entry.path().extension() == ".pcd" &&
+           filename.find(g_pcd_prefix + "scans_") != std::string::npos){
+          try{
+            fs::remove(entry.path());
+            deleted_count++;
+            LOG(INFO) << GREEN << " ---> Deleted old PCD fragment: " << filename << RESET;
+          } catch(const std::exception& e){
+            LOG(WARNING) << RED << " ---> Failed to delete " << filename 
+                        << ": " << e.what() << RESET;
+          }
+        }
+        if(entry.path().extension() == ".txt" &&
+           filename.find(g_pcd_prefix + "scans_") != std::string::npos){
+          try{
+            fs::remove(entry.path());
+            deleted_count++;
+            LOG(INFO) << GREEN << " ---> Deleted old pose file: " << filename << RESET;
+          } catch(const std::exception& e){
+            LOG(WARNING) << RED << " ---> Failed to delete " << filename 
+                        << ": " << e.what() << RESET;
+          }
+        }
+      }
+      if(deleted_count > 0){
+        LOG(INFO) << YELLOW << " ---> Deleted " << deleted_count 
+                  << " old PCD fragments with prefix '" << g_pcd_prefix << "'" << RESET;
+      }
+    }
+    
     save_running_ = true;
     save_thread_ = std::thread(&SuperLIO::SaveThread, this);
   }
@@ -531,6 +573,10 @@ void SuperLIO::saveMap(){
           << " --grid_size " << g_dynamic_removal_grid_size
           << " --min_neighbors " << g_dynamic_removal_min_neighbors
           << " --method " << g_dynamic_removal_method;
+      
+      if(!g_pcd_prefix.empty()) {
+        cmd << " --scans_prefix " << g_pcd_prefix;
+      }
       
       if(g_dynamic_removal_method == 0) {
         cmd << " --frame_window " << g_dynamic_removal_frame_window;

@@ -23,6 +23,7 @@
 #include <fstream>
 #include <sstream>
 #include <mutex>
+#include <omp.h>
 
 #include <Eigen/Core>
 #include <Eigen/Geometry>
@@ -51,6 +52,7 @@ struct Config {
     bool verbose = true;
     RemovalMethod method = RemovalMethod::TEMPORAL;
     int raycast_min_hits = 2;
+    std::string scans_prefix = "";
 };
 
 using PointType = pcl::PointXYZI;
@@ -207,20 +209,24 @@ std::vector<FrameData> loadPointCloudFramesWithOdom(const std::string& input_dir
     return frames;
 }
 
-std::vector<CloudPtr> loadPointCloudFrames(const std::string& input_dir, bool verbose) {
+std::vector<CloudPtr> loadPointCloudFrames(const std::string& input_dir, bool verbose, const std::string& scans_prefix = "") {
     std::vector<CloudPtr> frames;
     std::vector<std::string> pcd_files;
 
     for (const auto& entry : fs::directory_iterator(input_dir)) {
         if (entry.path().extension() == ".pcd") {
-            pcd_files.push_back(entry.path().string());
+            std::string filename = entry.path().filename().string();
+            if (scans_prefix.empty() || filename.find(scans_prefix) == 0) {
+                pcd_files.push_back(entry.path().string());
+            }
         }
     }
 
     std::sort(pcd_files.begin(), pcd_files.end());
 
     if (verbose) {
-        LOG(INFO) << "Found " << pcd_files.size() << " PCD files in " << input_dir;
+        LOG(INFO) << "Found " << pcd_files.size() << " PCD files in " << input_dir 
+                  << (scans_prefix.empty() ? "" : " with prefix '" + scans_prefix + "'");
     }
 
     for (const auto& file : pcd_files) {
@@ -259,55 +265,73 @@ CloudPtr filterDynamicPointsTemporal(
     size_t n_frames = frames.size();
     std::vector<OccupancyGrid> grids(n_frames, OccupancyGrid(config.grid_size));
 
+#pragma omp parallel for schedule(dynamic)
     for (size_t i = 0; i < n_frames; ++i) {
         grids[i].insertCloud(frames[i]);
         if (config.verbose && i % 10 == 0) {
+#pragma omp critical
             LOG(INFO) << "Frame " << i << ": " << grids[i].size() << " occupied voxels";
         }
     }
 
-    CloudPtr filtered_cloud(new PointCloudType());
+    std::vector<PointType, Eigen::aligned_allocator<PointType>> filtered_points;
+    std::vector<int> frame_removed_counts(n_frames, 0);
     int total_points = 0;
     int removed_points = 0;
 
-    for (size_t frame_idx = 0; frame_idx < n_frames; ++frame_idx) {
-        const CloudPtr& frame = frames[frame_idx];
-        int frame_removed = 0;
+#pragma omp parallel reduction(+:total_points, removed_points)
+    {
+        std::vector<PointType, Eigen::aligned_allocator<PointType>> local_filtered_points;
 
-        for (const auto& point : frame->points) {
-            total_points++;
-            VoxelKey key = pointToVoxelKey(point, config.grid_size);
+#pragma omp for schedule(dynamic)
+        for (size_t frame_idx = 0; frame_idx < n_frames; ++frame_idx) {
+            const CloudPtr& frame = frames[frame_idx];
+            int frame_removed = 0;
 
-            bool is_dynamic = true;
-            int window = config.frame_window;
+            for (const auto& point : frame->points) {
+                total_points++;
+                VoxelKey key = pointToVoxelKey(point, config.grid_size);
 
-            for (int offset = -window; offset <= window; ++offset) {
-                if (offset == 0) continue;
-                
-                int neighbor_idx = static_cast<int>(frame_idx) + offset;
-                if (neighbor_idx < 0 || neighbor_idx >= static_cast<int>(n_frames)) {
-                    continue;
+                bool is_dynamic = true;
+                int window = config.frame_window;
+
+                for (int offset = -window; offset <= window; ++offset) {
+                    if (offset == 0) continue;
+                    
+                    int neighbor_idx = static_cast<int>(frame_idx) + offset;
+                    if (neighbor_idx < 0 || neighbor_idx >= static_cast<int>(n_frames)) {
+                        continue;
+                    }
+
+                    if (grids[neighbor_idx].isOccupied(key)) {
+                        is_dynamic = false;
+                        break;
+                    }
                 }
 
-                if (grids[neighbor_idx].isOccupied(key)) {
-                    is_dynamic = false;
-                    break;
+                if (is_dynamic) {
+                    removed_points++;
+                    frame_removed++;
+                } else {
+                    local_filtered_points.push_back(point);
                 }
             }
 
-            if (is_dynamic) {
-                removed_points++;
-                frame_removed++;
-            } else {
-                filtered_cloud->points.push_back(point);
-            }
+            frame_removed_counts[frame_idx] = frame_removed;
         }
 
-        if (config.verbose && frame_removed > 0) {
-            LOG(INFO) << "Frame " << frame_idx << ": removed " << frame_removed << " dynamic points";
+#pragma omp critical
+        filtered_points.insert(filtered_points.end(), local_filtered_points.begin(), local_filtered_points.end());
+    }
+
+    for (size_t frame_idx = 0; frame_idx < n_frames; ++frame_idx) {
+        if (config.verbose && frame_removed_counts[frame_idx] > 0) {
+            LOG(INFO) << "Frame " << frame_idx << ": removed " << frame_removed_counts[frame_idx] << " dynamic points";
         }
     }
 
+    CloudPtr filtered_cloud(new PointCloudType());
+    filtered_cloud->points = std::move(filtered_points);
     filtered_cloud->width = filtered_cloud->points.size();
     filtered_cloud->height = 1;
     filtered_cloud->is_dense = true;
@@ -590,6 +614,7 @@ void printUsage(const char* program_name) {
               << "  --frame_window <int>     Frame window size for temporal method (default: 1)\n"
               << "  --method <0|1>           Removal method: 0=Temporal, 1=Raycast (default: 0)\n"
               << "  --raycast_min_hits <int> Min hits for raycast method (default: 2)\n"
+              << "  --scans_prefix <str>     Only process PCD files with this prefix (default: empty)\n"
               << "  --disable_isolated       Disable isolated point removal\n"
               << "  --quiet                  Reduce output verbosity\n"
               << "  --help                   Show this help message\n";
@@ -619,6 +644,8 @@ Config parseArgs(int argc, char** argv) {
             config.method = (method == 1) ? RemovalMethod::RAYCAST : RemovalMethod::TEMPORAL;
         } else if (arg == "--raycast_min_hits" && i + 1 < argc) {
             config.raycast_min_hits = std::stoi(argv[++i]);
+        } else if (arg == "--scans_prefix" && i + 1 < argc) {
+            config.scans_prefix = argv[++i];
         } else if (arg == "--disable_isolated") {
             config.enable_isolated_removal = false;
         } else if (arg == "--quiet") {
@@ -661,7 +688,7 @@ void runDynamicRemoval(const Config& config) {
         filtered_cloud = filterDynamicPointsRaycast(frames, config);
     } else {
         LOG(INFO) << "\n=== Loading Point Cloud Frames ===";
-        std::vector<CloudPtr> frames = loadPointCloudFrames(config.input_dir, config.verbose);
+        std::vector<CloudPtr> frames = loadPointCloudFrames(config.input_dir, config.verbose, config.scans_prefix);
         
         if (frames.empty()) {
             LOG(ERROR) << "No valid point cloud frames loaded. Exiting.";

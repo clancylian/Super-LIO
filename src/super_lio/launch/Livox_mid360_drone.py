@@ -62,6 +62,14 @@ def generate_launch_description():
     rviz_flag = LaunchConfiguration('rviz')
     ld.add_action(declare_rviz_arg)
 
+    declare_dynamic_removal_arg = DeclareLaunchArgument(
+        'dynamic_removal',
+        default_value='true',
+        description='Whether to enable dynamic removal'
+    )
+    dynamic_removal_flag = LaunchConfiguration('dynamic_removal')
+    ld.add_action(declare_dynamic_removal_arg)
+
 
 
     # 在线模式：Livox雷达驱动
@@ -105,7 +113,7 @@ def generate_launch_description():
         executable='super_lio_node',
         name='super_lio_node',
         output='screen',
-        parameters=[config_yaml, {'use_sim_time': use_sim_time}],
+        parameters=[config_yaml, {'use_sim_time': use_sim_time, 'lio.dynamic_removal.enable': dynamic_removal_flag}],
         prefix=['taskset -c 7'],   # 绑定 CPU 7
         arguments=['--ros-args', '--log-level', 'info']
     )

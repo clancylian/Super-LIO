@@ -80,7 +80,6 @@ namespace LI2Sup{
 
   /// lio only undistort mode
   bool g_lio_only_undistort = false;
-  string g_lio_only_undistort_frame = "world";
 
   ResidualType g_residual_type = PROB;
 

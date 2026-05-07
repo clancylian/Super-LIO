@@ -97,7 +97,6 @@ namespace LI2Sup{
 
   /// lio only undistort mode
   extern bool g_lio_only_undistort;
-  extern std::string g_lio_only_undistort_frame;
 
   /// Define the hybrid residual formulation.
   enum ResidualType{

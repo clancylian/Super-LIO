@@ -14,6 +14,8 @@
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp/callback_group.hpp>
 #include <tf2_ros/transform_broadcaster.h>
+#include <tf2_ros/transform_listener.h>
+#include <tf2_ros/buffer.h>
 #include <geometry_msgs/msg/transform_stamped.hpp>
 
 #include <sensor_msgs/msg/imu.hpp>
@@ -77,8 +79,9 @@ public:
 
   void pub_odom(const NavState&);
   void pub_cloud_world(const BASIC::CloudPtr& pc, double time);
+  void pub_cloud_world_undistort_only(const BASIC::CloudPtr& pc, double time, const std::string& lidar_frame);
   void pub_cloud_body(const BASIC::CloudPtr& pc, double time);
-  void pub_cloud_undistort_only(const BASIC::CloudPtr& pc, double time);
+  void pub_cloud_undistort_only(const BASIC::CloudPtr& pc, double time, const std::string& lidar_frame);
   void pub_cloud2planner(const BASIC::CloudPtr& pc, double time);
   void pub_cloud_world_pose(const BASIC::CloudPtr& pc, 
                             const NavState& state);
@@ -135,6 +138,8 @@ private:
   geometry_msgs::msg::PoseStamped msg2uav_;
   sensor_msgs::msg::PointCloud2 global_map_msg_;
   std::shared_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
+  std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
+  std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
 
   BASIC::V3 last_path_point_ = BASIC::V3(0, 0, -100);
 

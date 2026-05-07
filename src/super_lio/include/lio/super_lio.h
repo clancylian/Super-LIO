@@ -51,6 +51,7 @@ protected:
     bool has_world_pc = false;
     bool has_body_pc = false;
     bool is_undistort_only = false;
+    std::string lidar_frame;
   };
 
   struct SaveData {
@@ -85,6 +86,7 @@ protected:
   VoxelGridClosest<BASIC::PointType> voxel_grid_fliter_;
   ROSWrapper::Ptr data_wrapper_;
   MeasureGroup measures_;
+  std::string current_lidar_frame_;
   
   bool flg_init_ = false;
   bool flg_first_scan_ = true;

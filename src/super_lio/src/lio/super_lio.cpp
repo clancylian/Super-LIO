@@ -208,6 +208,7 @@ void SuperLIO::process(){
   if(!data_wrapper_->sync_measure(measures_)){
     return;
   }
+  current_lidar_frame_ = measures_.lidar.frame_id;
   (this->*state_fn_)();
 }
 
@@ -835,8 +836,24 @@ void SuperLIO::Output(){
   OutputData output_data;
   output_data.state = state;
   output_data.is_undistort_only = g_lio_only_undistort;
+  output_data.lidar_frame = current_lidar_frame_;
 
   if(g_lio_only_undistort){
+    if(g_visual_map){
+      static int count = -1;
+      count++;
+      if(count % g_pub_step == 0){
+        count = 0;
+        output_data.world_pc.reset(new PointCloudType());
+        if(g_visual_dense){
+          *output_data.world_pc = *scan_undistort_full_;
+        }else{
+          *output_data.world_pc = *ds_undistort_;
+        }
+        output_data.has_world_pc = true;
+      }
+    }
+
     if(g_visual_map_body){
       static int count_body = -1;
       count_body++;
@@ -923,12 +940,16 @@ void SuperLIO::OutputThread(){
     }
     
     if(data.has_world_pc && data.world_pc){
-      data_wrapper_->pub_cloud_world(data.world_pc, data.state.timestamp);
+      if(data.is_undistort_only){
+        data_wrapper_->pub_cloud_world_undistort_only(data.world_pc, data.state.timestamp, data.lidar_frame);
+      }else{
+        data_wrapper_->pub_cloud_world(data.world_pc, data.state.timestamp);
+      }
     }
     
     if(data.has_body_pc && data.body_pc){
       if(data.is_undistort_only){
-        data_wrapper_->pub_cloud_undistort_only(data.body_pc, data.state.timestamp);
+        data_wrapper_->pub_cloud_undistort_only(data.body_pc, data.state.timestamp, data.lidar_frame);
       }else{
         data_wrapper_->pub_cloud_body(data.body_pc, data.state.timestamp);
       }

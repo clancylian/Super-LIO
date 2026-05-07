@@ -2,6 +2,8 @@
 #include "ros/ROSWrapper.h"
 #include "geometry_msgs/msg/pose_with_covariance_stamped.hpp"
 #include "lio/super_lio.h"
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
+#include <tf2_sensor_msgs/tf2_sensor_msgs.hpp>
 
 #ifdef LIVOX_SUPPORT
 #include "livox_ros_driver2/msg/custom_msg.hpp"
@@ -289,13 +291,8 @@ void LoadParamFromRos(rclcpp::Node& node)
   node.declare_parameter<bool>("lio.lio_only_undistort", false);
   node.get_parameter("lio.lio_only_undistort", g_lio_only_undistort);
 
-  node.declare_parameter<std::string>("lio.lio_only_undistort_frame", "world");
-  node.get_parameter("lio.lio_only_undistort_frame", g_lio_only_undistort_frame);
-
   LOG(INFO) << GREEN << " ---> [Param] lio_only_undistort: "
             << (g_lio_only_undistort ? "true" : "false") << RESET;
-  LOG(INFO) << GREEN << " ---> [Param] lio_only_undistort_frame: "
-            << g_lio_only_undistort_frame << RESET;
 
   LOG(INFO) << GREEN << " ---> [Params]: Load from ROS2 parameter server."
             << RESET;
@@ -473,6 +470,9 @@ void ROSWrapper::setupIO(){
 
   tf_broadcaster_ =
       std::make_shared<tf2_ros::TransformBroadcaster>(this);
+
+  tf_buffer_ = std::make_shared<tf2_ros::Buffer>(this->get_clock());
+  tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 }
 
 
@@ -576,6 +576,7 @@ void ROSWrapper::livoxHandler(const livox_ros_driver2::msg::CustomMsg::SharedPtr
   }
   lidar_data.start_time = stampToSec(msg->header.stamp);
   lidar_data.end_time   = lidar_data.start_time + offset_time;
+  lidar_data.frame_id = msg->header.frame_id;
   lidar_buffer_.push_back(lidar_data);
 }
 #endif
@@ -745,6 +746,7 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
     return;
   }
   
+  lidar_data.frame_id = msg->header.frame_id;
   lidar_buffer_.push_back(lidar_data);
 }
 
@@ -898,6 +900,32 @@ void ROSWrapper::pub_cloud_world(const CloudPtr& pc, double time){
 }
 
 
+void ROSWrapper::pub_cloud_world_undistort_only(const CloudPtr& pc, double time, const std::string& lidar_frame){
+  try{
+    geometry_msgs::msg::TransformStamped transform_stamped;
+    transform_stamped = tf_buffer_->lookupTransform(
+        g_world_frame, lidar_frame, tf2::TimePointZero);
+    
+    sensor_msgs::msg::PointCloud2 cloud_in, cloud_out;
+    pcl::toROSMsg(*pc, cloud_in);
+    cloud_in.header.frame_id = lidar_frame;
+    cloud_in.header.stamp = toRosTime(time);
+    
+    tf2::doTransform(cloud_in, cloud_out, transform_stamped);
+    cloud_out.header.frame_id = g_world_frame;
+    pub_cloud_world_->publish(cloud_out);
+  } catch (const tf2::TransformException& ex) {
+    LOG(WARNING) << YELLOW << " ---> [Undistort] TF lookup failed: " << ex.what() 
+                 << ", publishing without transform to " << g_world_frame << RESET;
+    sensor_msgs::msg::PointCloud2 cloud;
+    pcl::toROSMsg(*pc, cloud);
+    cloud.header.frame_id = g_world_frame;
+    cloud.header.stamp = toRosTime(time);
+    pub_cloud_world_->publish(cloud);
+  }
+}
+
+
 void ROSWrapper::pub_cloud_body(const CloudPtr& pc, double time){
   sensor_msgs::msg::PointCloud2 cloud;
   pcl::toROSMsg(*pc, cloud);
@@ -907,10 +935,10 @@ void ROSWrapper::pub_cloud_body(const CloudPtr& pc, double time){
 }
 
 
-void ROSWrapper::pub_cloud_undistort_only(const CloudPtr& pc, double time){
+void ROSWrapper::pub_cloud_undistort_only(const CloudPtr& pc, double time, const std::string& lidar_frame){
   sensor_msgs::msg::PointCloud2 cloud;
   pcl::toROSMsg(*pc, cloud);
-  cloud.header.frame_id = g_lio_only_undistort_frame;
+  cloud.header.frame_id = lidar_frame;
   cloud.header.stamp = toRosTime(time);
   pub_cloud_body_->publish(cloud);
 }

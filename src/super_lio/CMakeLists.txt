@@ -23,6 +23,9 @@ find_package(sensor_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(pcl_ros REQUIRED)
+find_package(tf2_ros REQUIRED)
+find_package(tf2_geometry_msgs REQUIRED)
+find_package(tf2_sensor_msgs REQUIRED)
 
 find_package(Eigen3 REQUIRED NO_MODULE)
 find_package(PCL REQUIRED)
@@ -76,6 +79,9 @@ ament_target_dependencies(lio PUBLIC
   pcl_ros
   basic
   rosidl_default_runtime
+  tf2_ros
+  tf2_geometry_msgs
+  tf2_sensor_msgs
 )
 
 if(LIVOX_SUPPORT)

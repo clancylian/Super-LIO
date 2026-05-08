@@ -854,37 +854,62 @@ void ROSWrapper::pub_odom(const NavState& state){
   tf_broadcaster_->sendTransform(tf_msg);
 
   // Publish base_footprint transform
-  if (g_footprint_pub_en) {
-    geometry_msgs::msg::TransformStamped footprint_transform;
-    footprint_transform.header.stamp = odom.header.stamp;
-    footprint_transform.header.frame_id = g_world_frame;
-    footprint_transform.child_frame_id = g_tf_base_footprint_frame;
-    
-    footprint_transform.transform.translation.x = state.p[0];
-    footprint_transform.transform.translation.y = state.p[1];
-    footprint_transform.transform.translation.z = state.p[2];
-    
-    M3 R_axis_align;
-    switch(g_ref_gravity_axis) {
-      case 0:  R_axis_align << 0, 0, 1,  0, 1, 0, -1, 0, 0; break;
-      case 1:  R_axis_align << 1, 0, 0,  0, 0, 1,  0, -1, 0; break;
-      case 2:  
-      default: R_axis_align = M3::Identity(); break;
-    }
-    
-    M3 R_aligned = R_axis_align * state.R.R_;
-    
-    double yaw = std::atan2(R_aligned(1, 0), R_aligned(0, 0));
-    double cos_yaw_half = std::cos(yaw * 0.5);
-    double sin_yaw_half = std::sin(yaw * 0.5);
-    
-    footprint_transform.transform.rotation.w = cos_yaw_half;
-    footprint_transform.transform.rotation.x = 0.0;
-    footprint_transform.transform.rotation.y = 0.0;
-    footprint_transform.transform.rotation.z = sin_yaw_half;
-    
-    tf_broadcaster_->sendTransform(footprint_transform);
-  }
+  // 在 pub_odom 函数末尾添加以下逻辑
+if (g_footprint_pub_en) {
+    geometry_msgs::msg::TransformStamped tf_footprint;
+    tf_footprint.header.stamp = odom.header.stamp;
+    tf_footprint.header.frame_id = g_world_frame;
+    tf_footprint.child_frame_id = g_tf_base_footprint_frame;
+
+    // 1. 位置保持不变
+    tf_footprint.transform.translation.x = state.p[0];
+    tf_footprint.transform.translation.y = state.p[1];
+    tf_footprint.transform.translation.z = state.p[2];
+
+    // 2. 根据重力配置确定世界系下的“天顶”向量 (Up Vector)
+    // 根据你的矩阵逻辑：
+    // case 0 (+X方向重力): Up 是 -X
+    // case 1 (+Y方向重力): Up 是 -Y
+    // case 2 (-Z方向重力): Up 是 +Z
+    Eigen::Vector3f world_up;
+    if (g_ref_gravity_axis == 0)      world_up = Eigen::Vector3f(-1, 0, 0);
+    else if (g_ref_gravity_axis == 1) world_up = Eigen::Vector3f(0, -1, 0);
+    else                              world_up = Eigen::Vector3f(0, 0, 1);
+
+    // 3. 获取雷达在世界系下的“前方”向量 (假设雷达局部 Z 为前)
+    // 如果你的雷达安装定义 X 为前，请改为 UnitX()
+    Eigen::Vector3f lidar_fwd_local = Eigen::Vector3f::UnitZ(); 
+    Eigen::Vector3f lidar_fwd_world = Eigen::Quaternionf(state.R.R_) * lidar_fwd_local;
+
+    // 4. 将“前方”投影到水平面上 (剔除掉重力方向的分量)
+    //公式: f_proj = f - (f · u) * u
+    Eigen::Vector3f fwd_proj = lidar_fwd_world - (lidar_fwd_world.dot(world_up)) * world_up;
+    fwd_proj.normalize();
+
+    // 5. 构造 base_footprint 的旋转矩阵 (正交基)
+    // X 轴 = 投影后的前方
+    // Z 轴 = 世界系天顶
+    // Y 轴 = Z 叉乘 X
+    Eigen::Vector3f foot_x = fwd_proj;
+    Eigen::Vector3f foot_z = world_up;
+    Eigen::Vector3f foot_y = foot_z.cross(foot_x);
+
+    Eigen::Matrix3f foot_mat;
+    foot_mat.col(0) = foot_x;
+    foot_mat.col(1) = foot_y;
+    foot_mat.col(2) = foot_z;
+
+    // 6. 转换为四元数发布
+    Eigen::Quaternionf q_foot(foot_mat);
+    q_foot.normalize();
+
+    tf_footprint.transform.rotation.x = q_foot.x();
+    tf_footprint.transform.rotation.y = q_foot.y();
+    tf_footprint.transform.rotation.z = q_foot.z();
+    tf_footprint.transform.rotation.w = q_foot.w();
+
+    tf_broadcaster_->sendTransform(tf_footprint);
+}
 
   // tf_msg.child_frame_id = "god";
   // tf_msg.transform.rotation.x = 0.0;

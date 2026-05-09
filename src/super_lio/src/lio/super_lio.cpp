@@ -177,6 +177,14 @@ SuperLIO::~SuperLIO(){
 
 void SuperLIO::stateWaitKFInit()
 {
+  // downsample_only mode: skip KF and map initialization
+  if(g_downsample_only){
+    kf_->init_ = true;
+    state_fn_ = &SuperLIO::stateProcess;
+    LOG(INFO) << GREEN << " ---> [SuperLIO]: Downsample-only mode, skip KF and map init" << RESET;
+    return;
+  }
+  
   if (kf_init()) {
     state_fn_ = &SuperLIO::stateWaitMapInit;
     LOG(INFO) << GREEN << " ---> [SuperLIO]: KF init done" << RESET;
@@ -185,6 +193,14 @@ void SuperLIO::stateWaitKFInit()
 
 void SuperLIO::stateWaitMapInit()
 {
+  // downsample_only mode should not reach here, but add check for safety
+  if(g_downsample_only){
+    kf_->init_ = true;
+    state_fn_ = &SuperLIO::stateProcess;
+    LOG(INFO) << GREEN << " ---> [SuperLIO]: Downsample-only mode, skip map init" << RESET;
+    return;
+  }
+  
   if(g_lio_only_undistort){
     kf_->init_ = true;
     state_fn_ = &SuperLIO::stateProcess;
@@ -308,13 +324,30 @@ bool SuperLIO::map_init(){
 
 void SuperLIO::stateProcess(){
   frame_num_++;
+  
+  // downsample_only mode has highest priority
+  if(g_downsample_only){
+    if(g_time_eva){
+      time_record_.Evaluate([this]() { DownSampleOnly(); }, "[DownSampleOnly]");
+    }else{
+      DownSampleOnly();
+    }
+    Output();
+    caceData();
+    return;
+  }
+  
   if(g_lio_only_undistort){
     if(g_time_eva){
       time_record_.Evaluate([this](){Propagation_Undistort();}, "[Undistort]");
       time_record_.Evaluate([this]() { DownSample(); }, "[DownSample]");
+      time_record_.Evaluate([this]() { Observe(); }, "[Observe]");
+      time_record_.Evaluate([this]() { UpdateMap(); }, "[UpdateMap]");
     }else{
       Propagation_Undistort();
       DownSample();
+      Observe();
+      UpdateMap();
     }
     Output();
     caceData();
@@ -705,6 +738,42 @@ void SuperLIO::DownSample(){
 }
 
 
+void SuperLIO::DownSampleOnly(){
+  // Directly process raw point cloud without IMU propagation
+  // Apply filter_rate, intensity_filter, and voxel_filter
+  
+  scan_undistort_full_->clear();
+  ds_undistort_->clear();
+  
+  auto& raw_pc = measures_.lidar.pc;
+  std::size_t ptsize = raw_pc->size();
+  
+  // Apply filter_rate and intensity_filter
+  for(std::size_t i = 0; i < ptsize; i += g_filter_rate){
+    const auto& pt = raw_pc->points[i];
+    
+    // Apply intensity filter if enabled
+    if(g_intensity_filter_en && pt.intensity < g_intensity_min){
+      continue;
+    }
+    
+    // Apply range filter
+    double dis = pt.x * pt.x + pt.y * pt.y + pt.z * pt.z;
+    if(dis > g_blind2 && dis < g_maxrange2){
+      scan_undistort_full_->push_back(pt);
+    }
+  }
+  
+  // Apply voxel grid filter if enabled
+  if(g_enable_downsample && !scan_undistort_full_->empty()){
+    voxel_grid_fliter_.setInputCloud(scan_undistort_full_);
+    voxel_grid_fliter_.filter(ds_undistort_);
+  }else{
+    *ds_undistort_ = *scan_undistort_full_;
+  }
+}
+
+
 struct ThreadACC{
   M6d HTVH = M6d::Zero();
   V6d HTVr = V6d::Zero();
@@ -835,10 +904,42 @@ void SuperLIO::Output(){
   
   OutputData output_data;
   output_data.state = state;
-  output_data.is_undistort_only = g_lio_only_undistort;
+  output_data.is_undistort_only = g_lio_only_undistort || g_downsample_only;
   output_data.lidar_frame = current_lidar_frame_;
 
-  if(g_lio_only_undistort){
+  // downsample_only mode: output without transformation
+  if(g_downsample_only){
+    if(g_visual_map){
+      static int count = -1;
+      count++;
+      if(count % g_pub_step == 0){
+        count = 0;
+        output_data.world_pc.reset(new PointCloudType());
+        if(g_visual_dense){
+          *output_data.world_pc = *scan_undistort_full_;
+        }else{
+          *output_data.world_pc = *ds_undistort_;
+        }
+        output_data.has_world_pc = true;
+      }
+    }
+
+    if(g_visual_map_body){
+      static int count_body = -1;
+      count_body++;
+      if(count_body % g_pub_step == 0){
+        count_body = 0;
+        output_data.body_pc.reset(new PointCloudType());
+        if(g_visual_dense_body){
+          *output_data.body_pc = *scan_undistort_full_;
+        }else{
+          *output_data.body_pc = *ds_undistort_;
+        }
+        output_data.has_body_pc = true;
+      }
+    }
+  }
+  else if(g_lio_only_undistort){
     if(g_visual_map){
       static int count = -1;
       count++;

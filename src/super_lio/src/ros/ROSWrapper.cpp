@@ -294,6 +294,13 @@ void LoadParamFromRos(rclcpp::Node& node)
   LOG(INFO) << GREEN << " ---> [Param] lio_only_undistort: "
             << (g_lio_only_undistort ? "true" : "false") << RESET;
 
+  // ================= downsample only mode (highest priority) =================
+  node.declare_parameter<bool>("lio.downsample_only", false);
+  node.get_parameter("lio.downsample_only", g_downsample_only);
+
+  LOG(INFO) << GREEN << " ---> [Param] downsample_only: "
+            << (g_downsample_only ? "true" : "false") << RESET;
+
   LOG(INFO) << GREEN << " ---> [Params]: Load from ROS2 parameter server."
             << RESET;
 }

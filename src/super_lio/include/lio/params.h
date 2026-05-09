@@ -98,6 +98,9 @@ namespace LI2Sup{
   /// lio only undistort mode
   extern bool g_lio_only_undistort;
 
+  /// downsample only mode (highest priority)
+  extern bool g_downsample_only;
+
   /// Define the hybrid residual formulation.
   enum ResidualType{
     PROB = 1,     // Probabilistic residual

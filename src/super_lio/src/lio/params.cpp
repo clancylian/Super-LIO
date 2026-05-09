@@ -81,6 +81,9 @@ namespace LI2Sup{
   /// lio only undistort mode
   bool g_lio_only_undistort = false;
 
+  /// downsample only mode (highest priority)
+  bool g_downsample_only = false;
+
   ResidualType g_residual_type = PROB;
 
   /// for relocation

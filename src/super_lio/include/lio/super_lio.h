@@ -69,6 +69,7 @@ protected:
   virtual bool map_init();
   void Propagation_Undistort();
   void DownSample();
+  void DownSampleOnly();
   void Observe();
   virtual void UpdateMap();
   virtual void Output();

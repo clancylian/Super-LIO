@@ -760,7 +760,12 @@ void SuperLIO::DownSampleOnly(){
     // Apply range filter
     double dis = pt.x * pt.x + pt.y * pt.y + pt.z * pt.z;
     if(dis > g_blind2 && dis < g_maxrange2){
-      scan_undistort_full_->push_back(pt);
+      pcl::PointXYZI pt_out;
+      pt_out.x = pt.x;
+      pt_out.y = pt.y;
+      pt_out.z = pt.z;
+      pt_out.intensity = pt.intensity;
+      scan_undistort_full_->push_back(pt_out);
     }
   }
   

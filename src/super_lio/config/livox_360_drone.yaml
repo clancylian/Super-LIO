@@ -13,9 +13,9 @@
     lio.sensor.lidar_type: 1
     lio.sensor.blind: 0.5
     lio.sensor.maxrange: 100.0
-    lio.sensor.filter_rate: 2
+    lio.sensor.filter_rate: 3
     lio.sensor.enable_downsample: true
-    lio.sensor.voxel_fliter_size: 0.5
+    lio.sensor.voxel_fliter_size: 0.25
 
     lio.sensor.intensity_filter_en: true
     lio.sensor.intensity_min: 10.0

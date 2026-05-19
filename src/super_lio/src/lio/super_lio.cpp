@@ -914,6 +914,7 @@ void SuperLIO::Output(){
 
   // downsample_only mode: output without transformation
   if(g_downsample_only){
+    output_data.state.timestamp = measures_.lidar.start_time;
     if(g_visual_map){
       static int count = -1;
       count++;

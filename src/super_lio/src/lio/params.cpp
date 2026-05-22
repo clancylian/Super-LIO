@@ -74,6 +74,7 @@ namespace LI2Sup{
   string g_tf_base_footprint_frame = "base_footprint";
   string g_world_frame = "world";
   string g_imu_frame = "imu";
+  string g_map_save_service_topic = "/map_save";
 
   /// for planner
   bool g_planner_enable;

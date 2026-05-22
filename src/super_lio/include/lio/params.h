@@ -92,6 +92,9 @@ namespace LI2Sup{
   extern std::string g_world_frame;
   extern std::string g_imu_frame;
 
+  /// map save service topic
+  extern std::string g_map_save_service_topic;
+
   /// for planner
   extern bool g_planner_enable;
 

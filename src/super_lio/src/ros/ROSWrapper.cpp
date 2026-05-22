@@ -53,6 +53,9 @@ void LoadParamFromRos(rclcpp::Node& node)
   node.declare_parameter<std::string>("lio.ros.imu_topic", "/imu");
   node.get_parameter("lio.ros.imu_topic", g_imu_topic);
 
+  node.declare_parameter<std::string>("lio.ros.map_save_service_topic", "/map_save");
+  node.get_parameter("lio.ros.map_save_service_topic", g_map_save_service_topic);
+
   node.declare_parameter<int>("lio.sensor.lidar_type", 0);
   node.get_parameter("lio.sensor.lidar_type", g_lidar_type);
 
@@ -401,11 +404,11 @@ ROSWrapper::ROSWrapper(const rclcpp::NodeOptions& options)
 void ROSWrapper::setupServices(){
   // 创建保存地图服务
   save_map_service_ = this->create_service<std_srvs::srv::Trigger>(
-      "/map_save",
+      g_map_save_service_topic,
       std::bind(&ROSWrapper::saveMapServiceCallback, this, 
                 std::placeholders::_1, std::placeholders::_2));
   
-  LOG(INFO) << GREEN << " ---> [Service] Save map service created: /map_save" << RESET;
+  LOG(INFO) << GREEN << " ---> [Service] Save map service created: " << g_map_save_service_topic << RESET;
 }
 
 

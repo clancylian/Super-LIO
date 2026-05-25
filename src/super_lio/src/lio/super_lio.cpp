@@ -449,10 +449,17 @@ void SuperLIO::caceData(){
 }
 
 void SuperLIO::PCDSaveOnly(){
+  bool should_stop = false;
+
+  if(pcd_save_has_work_.load() && pcd_pending_.load() == 0){
+    should_stop = true;
+  }
+
   DownSampleOnly();
 
   if(g_save_map && !ds_undistort_->empty()){
     pcd_index_++;
+    pcd_pending_++;
 
     SaveData save_data;
     save_data.cloud_to_save.reset(new PointCloudType(*ds_undistort_));
@@ -469,6 +476,16 @@ void SuperLIO::PCDSaveOnly(){
       save_queue_.push(std::move(save_data));
     }
     save_cv_.notify_one();
+
+    pcd_save_has_work_.store(true);
+  }
+
+  if(should_stop){
+    LOG(INFO) << YELLOW << " ---> [SuperLIO]: All PCDs saved to disk, exiting save mode..." << RESET;
+    g_pcd_save_mode.store(false);
+    pcd_save_has_work_.store(false);
+    saveMap();
+    reinitLIO();
   }
 }
 
@@ -516,6 +533,8 @@ void SuperLIO::SaveThread(){
                   << data.orientation.z() << " " << data.orientation.w() << std::endl;
         odom_file.close();
       }
+
+      pcd_pending_--;
     }
   }
 }

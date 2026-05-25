@@ -1133,42 +1133,25 @@ void ROSWrapper::saveMapServiceCallback(const std_srvs::srv::Trigger::Request::S
 {
   (void)request;
 
-  bool prev = g_pcd_save_mode.load();
-  bool next = !prev;
-
-  if (next) {
-    LOG(INFO) << YELLOW << " ---> [Service] Entering PCD save-only mode" << RESET;
-    g_pcd_save_mode.store(true);
-
-    lidar_buffer_.clear();
-    imu_buffer_.clear();
-    lidar_pushed_ = false;
-    last_timestamp_imu_ = -1.0;
-    last_timestamp_lidar_ = -1.0;
-
-    LOG(INFO) << YELLOW << " ---> [Service] Buffers cleared, saving PCD. Call /map_save again to exit." << RESET;
-    response->success = true;
-    response->message = "PCD save-only mode started. Call /map_save again to exit and save final map.";
-  } else {
-    LOG(INFO) << YELLOW << " ---> [Service] Exiting PCD save-only mode..." << RESET;
-    g_pcd_save_mode.store(false);
-
-    lidar_buffer_.clear();
-    imu_buffer_.clear();
-    lidar_pushed_ = false;
-    last_timestamp_imu_ = -1.0;
-    last_timestamp_lidar_ = -1.0;
-
-    if (super_lio_) {
-      super_lio_->saveMap();
-      super_lio_->printTimeRecord();
-      super_lio_->reinitLIO();
-    }
-
-    LOG(INFO) << GREEN << " ---> [Service] Exit done, final map saved, IMU pre-integration reset" << RESET;
-    response->success = true;
-    response->message = "Exited, final map saved, IMU pre-integration reset.";
+  if(g_pcd_save_mode.load()){
+    LOG(WARNING) << YELLOW << " ---> [Service] Already in PCD save-only mode, ignoring." << RESET;
+    response->success = false;
+    response->message = "Already in PCD save-only mode.";
+    return;
   }
+
+  LOG(INFO) << YELLOW << " ---> [Service] Entering PCD save-only mode" << RESET;
+  g_pcd_save_mode.store(true);
+
+  lidar_buffer_.clear();
+  imu_buffer_.clear();
+  lidar_pushed_ = false;
+  last_timestamp_imu_ = -1.0;
+  last_timestamp_lidar_ = -1.0;
+
+  LOG(INFO) << YELLOW << " ---> [Service] Will auto-exit when all PCDs are saved to disk." << RESET;
+  response->success = true;
+  response->message = "PCD save-only mode started. Will auto-exit when all PCDs saved.";
 }
 
 

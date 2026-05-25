@@ -114,6 +114,9 @@ protected:
   BASIC::V3 kf_init_mean_gyro_ = BASIC::V3::Zero();
   BASIC::V3 kf_init_mean_acce_ = BASIC::V3::Zero();
 
+  std::atomic<int> pcd_pending_{0};
+  std::atomic<bool> pcd_save_has_work_{false};
+
   Timer time_record_;
 
   std::thread output_thread_;

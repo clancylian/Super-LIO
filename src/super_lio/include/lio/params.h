@@ -106,6 +106,7 @@ namespace LI2Sup{
 
   /// pcd save only mode: skip all LIO/IMU, save PCD at full speed
   extern std::atomic<bool> g_pcd_save_mode;
+  extern int g_pcd_save_frames;
 
   /// Define the hybrid residual formulation.
   enum ResidualType{

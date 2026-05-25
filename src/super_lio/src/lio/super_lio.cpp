@@ -176,27 +176,15 @@ SuperLIO::~SuperLIO(){
 
 
 void SuperLIO::reinitLIO(){
-  LOG(INFO) << YELLOW << " ---> [SuperLIO]: Reinitializing LIO modules..." << RESET;
+  LOG(INFO) << YELLOW << " ---> [SuperLIO]: Reinitializing map (keeping KF pose)..." << RESET;
 
-  frame_num_ = 0;
-  flg_first_scan_ = true;
-
-  kf_init_imu_count_ = 0;
-  kf_init_mean_gyro_ = V3::Zero();
-  kf_init_mean_acce_ = V3::Zero();
-  
   ivox_.reset(new OctVoxMapType(OctVoxMapType::Options{g_ivox_resolution, g_ivox_capacity}));
-  kf_.reset(new ESKF());
-  data_wrapper_->setESKF(kf_);
-  kf_->init_ = false;
 
   if(g_save_map){
     point_map_.reset(new PointCloudType());
   }
 
-  state_fn_ = &SuperLIO::stateWaitKFInit;
-
-  LOG(INFO) << GREEN << " ---> [SuperLIO]: LIO reinitialized. pcd_index will continue from: " << pcd_index_ << RESET;
+  LOG(INFO) << GREEN << " ---> [SuperLIO]: Map reinitialized, world pose preserved. pcd_index=" << pcd_index_ << RESET;
 }
 
 
@@ -346,6 +334,12 @@ bool SuperLIO::map_init(){
 void SuperLIO::stateProcess(){
   frame_num_++;
   
+  if(pending_save_cleanup_){
+    pending_save_cleanup_ = false;
+    saveMap();
+    reinitLIO();
+  }
+  
   // pcd save-only mode: highest priority, skip all LIO/IMU
   if(g_pcd_save_mode.load()){
     PCDSaveOnly();
@@ -487,6 +481,15 @@ void SuperLIO::PCDSaveOnly(){
       save_queue_.push(std::move(save_data));
     }
     save_cv_.notify_one();
+  }
+
+  pcd_save_frame_count_++;
+  if(g_pcd_save_frames > 0 && pcd_save_frame_count_ >= g_pcd_save_frames){
+    LOG(INFO) << YELLOW << " ---> [SuperLIO]: PCD save complete (" << pcd_save_frame_count_
+              << " frames), auto-exiting save mode..." << RESET;
+    pcd_save_frame_count_ = 0;
+    g_pcd_save_mode.store(false);
+    pending_save_cleanup_ = true;
   }
 }
 

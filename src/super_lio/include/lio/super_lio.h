@@ -42,6 +42,7 @@ public:
   void process();
   void saveMap();
   void reinitLIO();
+  void resetPCDSaveCount() { pcd_save_frame_count_ = 0; }
   void printTimeRecord();
 
 protected:
@@ -113,6 +114,9 @@ protected:
   int kf_init_imu_count_ = 0;
   BASIC::V3 kf_init_mean_gyro_ = BASIC::V3::Zero();
   BASIC::V3 kf_init_mean_acce_ = BASIC::V3::Zero();
+
+  int pcd_save_frame_count_ = 0;
+  bool pending_save_cleanup_ = false;
 
   Timer time_record_;
 

@@ -85,6 +85,18 @@ public:
   bool init_ = false;
   bool Predict(const IMUData& imu, DynamicState& state_imu, DynamicState& state_robot);
 
+  void resetImuPreintegration(){
+    forward_time_ = -1;
+    forward_last_imu_ = IMUData();
+    fw_R_ = R_;
+    fw_p_ = BASIC::V3::Zero();
+    fw_v_ = BASIC::V3::Zero();
+    last_imu_time_ = -1.0;
+    last_imu_ = IMUData();
+    last_obs_time_ = 0.0;
+    current_obs_time_ = 0.0;
+  }
+
 private:
   void BuildNoise(const Options& options);
   void Update();

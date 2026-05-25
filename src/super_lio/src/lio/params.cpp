@@ -87,7 +87,6 @@ namespace LI2Sup{
 
   /// pcd save only mode
   std::atomic<bool> g_pcd_save_mode{false};
-  int g_pcd_save_frames = 0;
 
   ResidualType g_residual_type = PROB;
 

@@ -41,16 +41,11 @@ void LoadParamFromRos(rclcpp::Node& node)
   node.declare_parameter<int>("lio.map.save_interval", 1);
   node.get_parameter("lio.map.save_interval", g_pcd_save_interval);
 
-  node.declare_parameter<int>("lio.map.save_frames", 200);
-  node.get_parameter("lio.map.save_frames", g_pcd_save_frames);
-
   node.declare_parameter<std::string>("lio.map.pcd_prefix", "");
   node.get_parameter("lio.map.pcd_prefix", g_pcd_prefix);
 
   LOG(INFO) << GREEN << " ---> [Param] map/pcd_prefix: "
             << g_pcd_prefix << RESET;
-  LOG(INFO) << GREEN << " ---> [Param] map/save_frames: "
-            << g_pcd_save_frames << RESET;
 
   node.declare_parameter<std::string>("lio.ros.lidar_topic", "/lidar");
   node.get_parameter("lio.ros.lidar_topic", g_lidar_topic);
@@ -1142,12 +1137,8 @@ void ROSWrapper::saveMapServiceCallback(const std_srvs::srv::Trigger::Request::S
   bool next = !prev;
 
   if (next) {
-    LOG(INFO) << YELLOW << " ---> [Service] Entering PCD save-only mode (" << g_pcd_save_frames << " frames)" << RESET;
+    LOG(INFO) << YELLOW << " ---> [Service] Entering PCD save-only mode" << RESET;
     g_pcd_save_mode.store(true);
-
-    if (super_lio_) {
-      super_lio_->resetPCDSaveCount();
-    }
 
     lidar_buffer_.clear();
     imu_buffer_.clear();
@@ -1155,11 +1146,11 @@ void ROSWrapper::saveMapServiceCallback(const std_srvs::srv::Trigger::Request::S
     last_timestamp_imu_ = -1.0;
     last_timestamp_lidar_ = -1.0;
 
-    LOG(INFO) << YELLOW << " ---> [Service] Buffers cleared. Will auto-exit after " << g_pcd_save_frames << " frames." << RESET;
+    LOG(INFO) << YELLOW << " ---> [Service] Buffers cleared, saving PCD. Call /map_save again to exit." << RESET;
     response->success = true;
-    response->message = "PCD save-only mode started, auto-exit after " + std::to_string(g_pcd_save_frames) + " frames.";
+    response->message = "PCD save-only mode started. Call /map_save again to exit and save final map.";
   } else {
-    LOG(INFO) << YELLOW << " ---> [Service] Force-exiting PCD save-only mode..." << RESET;
+    LOG(INFO) << YELLOW << " ---> [Service] Exiting PCD save-only mode..." << RESET;
     g_pcd_save_mode.store(false);
 
     lidar_buffer_.clear();
@@ -1174,9 +1165,9 @@ void ROSWrapper::saveMapServiceCallback(const std_srvs::srv::Trigger::Request::S
       super_lio_->reinitLIO();
     }
 
-    LOG(INFO) << GREEN << " ---> [Service] Force exit done, final map saved, LIO recovered" << RESET;
+    LOG(INFO) << GREEN << " ---> [Service] Exit done, final map saved, IMU pre-integration reset" << RESET;
     response->success = true;
-    response->message = "Force exited, final map saved, LIO recovered.";
+    response->message = "Exited, final map saved, IMU pre-integration reset.";
   }
 }
 

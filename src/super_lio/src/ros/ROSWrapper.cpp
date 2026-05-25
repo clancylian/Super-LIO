@@ -402,6 +402,7 @@ ROSWrapper::ROSWrapper(const rclcpp::NodeOptions& options)
 
 
 void ROSWrapper::setupServices(){
+  // 创建保存地图服务
   save_map_service_ = this->create_service<std_srvs::srv::Trigger>(
       g_map_save_service_topic,
       std::bind(&ROSWrapper::saveMapServiceCallback, this, 
@@ -511,10 +512,6 @@ void ROSWrapper::imuHandler(const sensor_msgs::msg::Imu::SharedPtr msg){
 
   imu_buffer_.push_back(data);
   last_timestamp_imu_ = data.secs;
-
-  if(g_pcd_save_mode.load()){
-    return;
-  }
 
   DynamicState imu_state, robo_state;
   if(eskf_->Predict(data, imu_state, robo_state)){
@@ -1131,27 +1128,21 @@ void ROSWrapper::set_initial_data(BASIC::SE3& init_pose, bool& flg_get_init_gues
 void ROSWrapper::saveMapServiceCallback(const std_srvs::srv::Trigger::Request::SharedPtr request, 
                                         const std_srvs::srv::Trigger::Response::SharedPtr response)
 {
-  (void)request;
-
-  if(g_pcd_save_mode.load()){
-    LOG(WARNING) << YELLOW << " ---> [Service] Already in PCD save-only mode, ignoring." << RESET;
+  LOG(INFO) << GREEN << " ---> [Service] Save map service called" << RESET;
+  
+  if (super_lio_) {
+    // 调用SuperLIO的saveMap()方法保存地图
+    super_lio_->saveMap();
+    // 调用printTimeRecord()方法，参照退出流程
+    super_lio_->printTimeRecord();
+    LOG(INFO) << GREEN << " ---> [Service] Map saved successfully" << RESET;
+    response->success = true;
+    response->message = "Map saved successfully";
+  } else {
+    LOG(ERROR) << RED << " ---> [Service] SuperLIO instance not set" << RESET;
     response->success = false;
-    response->message = "Already in PCD save-only mode.";
-    return;
+    response->message = "SuperLIO instance not set";
   }
-
-  LOG(INFO) << YELLOW << " ---> [Service] Entering PCD save-only mode" << RESET;
-  g_pcd_save_mode.store(true);
-
-  lidar_buffer_.clear();
-  imu_buffer_.clear();
-  lidar_pushed_ = false;
-  last_timestamp_imu_ = -1.0;
-  last_timestamp_lidar_ = -1.0;
-
-  LOG(INFO) << YELLOW << " ---> [Service] Will auto-exit when all PCDs are saved to disk." << RESET;
-  response->success = true;
-  response->message = "PCD save-only mode started. Will auto-exit when all PCDs saved.";
 }
 
 

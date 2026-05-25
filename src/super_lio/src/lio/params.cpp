@@ -85,9 +85,6 @@ namespace LI2Sup{
   /// downsample only mode (highest priority)
   bool g_downsample_only = false;
 
-  /// pcd save only mode
-  std::atomic<bool> g_pcd_save_mode{false};
-
   ResidualType g_residual_type = PROB;
 
   /// for relocation

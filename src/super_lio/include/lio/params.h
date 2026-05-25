@@ -104,6 +104,9 @@ namespace LI2Sup{
   /// downsample only mode (highest priority)
   extern bool g_downsample_only;
 
+  /// pcd save only mode: skip all LIO/IMU, save PCD at full speed
+  extern std::atomic<bool> g_pcd_save_mode;
+
   /// Define the hybrid residual formulation.
   enum ResidualType{
     PROB = 1,     // Probabilistic residual

@@ -41,6 +41,7 @@ public:
   virtual void init();
   void process();
   void saveMap();
+  void reinitLIO();
   void printTimeRecord();
 
 protected:
@@ -76,6 +77,7 @@ protected:
   void OutputThread();
   void SaveThread();
   void caceData();
+  void PCDSaveOnly();
   void ProcessCaceMap();
 
   using StateFn = void (SuperLIO::*)();
@@ -107,6 +109,10 @@ protected:
   std::vector<std::pair<BASIC::M6, BASIC::V6>> H_R_;
   std::vector<std::array<double, 4>> abcd_vec_;
   int pcd_index_ = -1;
+
+  int kf_init_imu_count_ = 0;
+  BASIC::V3 kf_init_mean_gyro_ = BASIC::V3::Zero();
+  BASIC::V3 kf_init_mean_acce_ = BASIC::V3::Zero();
 
   Timer time_record_;
 

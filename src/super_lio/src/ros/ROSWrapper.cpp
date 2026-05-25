@@ -402,7 +402,6 @@ ROSWrapper::ROSWrapper(const rclcpp::NodeOptions& options)
 
 
 void ROSWrapper::setupServices(){
-  // 创建保存地图服务
   save_map_service_ = this->create_service<std_srvs::srv::Trigger>(
       g_map_save_service_topic,
       std::bind(&ROSWrapper::saveMapServiceCallback, this, 
@@ -1128,20 +1127,43 @@ void ROSWrapper::set_initial_data(BASIC::SE3& init_pose, bool& flg_get_init_gues
 void ROSWrapper::saveMapServiceCallback(const std_srvs::srv::Trigger::Request::SharedPtr request, 
                                         const std_srvs::srv::Trigger::Response::SharedPtr response)
 {
-  LOG(INFO) << GREEN << " ---> [Service] Save map service called" << RESET;
-  
-  if (super_lio_) {
-    // 调用SuperLIO的saveMap()方法保存地图
-    super_lio_->saveMap();
-    // 调用printTimeRecord()方法，参照退出流程
-    super_lio_->printTimeRecord();
-    LOG(INFO) << GREEN << " ---> [Service] Map saved successfully" << RESET;
+  (void)request;
+
+  bool prev = g_pcd_save_mode.load();
+  bool next = !prev;
+
+  if (next) {
+    LOG(INFO) << YELLOW << " ---> [Service] Entering PCD save-only mode: skip LIO/IMU, save PCD at full speed" << RESET;
+    g_pcd_save_mode.store(true);
+
+    lidar_buffer_.clear();
+    imu_buffer_.clear();
+    lidar_pushed_ = false;
+    last_timestamp_imu_ = -1.0;
+    last_timestamp_lidar_ = -1.0;
+
+    LOG(INFO) << YELLOW << " ---> [Service] Buffers cleared, ready for PCD save-only mode. Ensure LIDAR is stationary." << RESET;
     response->success = true;
-    response->message = "Map saved successfully";
+    response->message = "Entered PCD save-only mode. Call /map_save again to exit and save final map.";
   } else {
-    LOG(ERROR) << RED << " ---> [Service] SuperLIO instance not set" << RESET;
-    response->success = false;
-    response->message = "SuperLIO instance not set";
+    LOG(INFO) << YELLOW << " ---> [Service] Exiting PCD save-only mode, saving final map..." << RESET;
+    g_pcd_save_mode.store(false);
+
+    lidar_buffer_.clear();
+    imu_buffer_.clear();
+    lidar_pushed_ = false;
+    last_timestamp_imu_ = -1.0;
+    last_timestamp_lidar_ = -1.0;
+
+    if (super_lio_) {
+      super_lio_->saveMap();
+      super_lio_->printTimeRecord();
+      super_lio_->reinitLIO();
+    }
+
+    LOG(INFO) << GREEN << " ---> [Service] Final map saved, LIO/IMU reinitialized" << RESET;
+    response->success = true;
+    response->message = "Exited PCD save-only mode, final map saved, LIO/IMU reinitialized.";
   }
 }
 

@@ -175,6 +175,31 @@ SuperLIO::~SuperLIO(){
 }
 
 
+void SuperLIO::reinitLIO(){
+  LOG(INFO) << YELLOW << " ---> [SuperLIO]: Reinitializing LIO modules..." << RESET;
+
+  frame_num_ = 0;
+  flg_first_scan_ = true;
+
+  kf_init_imu_count_ = 0;
+  kf_init_mean_gyro_ = V3::Zero();
+  kf_init_mean_acce_ = V3::Zero();
+  
+  ivox_.reset(new OctVoxMapType(OctVoxMapType::Options{g_ivox_resolution, g_ivox_capacity}));
+  kf_.reset(new ESKF());
+  data_wrapper_->setESKF(kf_);
+  kf_->init_ = false;
+
+  if(g_save_map){
+    point_map_.reset(new PointCloudType());
+  }
+
+  state_fn_ = &SuperLIO::stateWaitKFInit;
+
+  LOG(INFO) << GREEN << " ---> [SuperLIO]: LIO reinitialized. pcd_index will continue from: " << pcd_index_ << RESET;
+}
+
+
 void SuperLIO::stateWaitKFInit()
 {
   // downsample_only mode: skip KF and map initialization
@@ -230,22 +255,18 @@ void SuperLIO::process(){
 
 
 bool SuperLIO::kf_init(){
-  static int imu_cout = 0;
-  static V3 mean_gyro = V3::Zero();
-  static V3 mean_acce = V3::Zero();
-
   for(auto& imu: measures_.imu){
-    imu_cout ++;
-    mean_gyro += (imu.gyr - mean_gyro) / imu_cout;
-    mean_acce += (imu.acc - mean_acce) / imu_cout;
+    kf_init_imu_count_++;
+    kf_init_mean_gyro_ += (imu.gyr - kf_init_mean_gyro_) / kf_init_imu_count_;
+    kf_init_mean_acce_ += (imu.acc - kf_init_mean_acce_) / kf_init_imu_count_;
   }
 
   /// 100 Hz for 1 second.
-  if(imu_cout < 50){
+  if(kf_init_imu_count_ < 50){
     return false;
   }
 
-  V3 gravity = - mean_acce * g_gravity_norm / mean_acce.norm();
+  V3 gravity = - kf_init_mean_acce_ * g_gravity_norm / kf_init_mean_acce_.norm();
   V3 ref_gravity;
   switch(g_ref_gravity_axis) {
     case 0:  ref_gravity = V3(g_gravity_norm, 0, 0); break;   // +X
@@ -258,12 +279,12 @@ bool SuperLIO::kf_init(){
   double yaw = atan2(n(1), n(0));
 
   LOG(INFO) << GREEN << " ---> [SuperLIO]: Gravity Alignment Results:" << RESET;
-  LOG(INFO) << GREEN << "      Mean Acceleration: [" << mean_acce.transpose() << "]" << RESET;
+  LOG(INFO) << GREEN << "      Mean Acceleration: [" << kf_init_mean_acce_.transpose() << "]" << RESET;
   LOG(INFO) << GREEN << "      Gravity Norm: " << g_gravity_norm << RESET;
   LOG(INFO) << GREEN << "      Measured Gravity: [" << gravity.transpose() << "]" << RESET;
   LOG(INFO) << GREEN << "      Reference Gravity: [" << ref_gravity.transpose() << "]" << RESET;
   LOG(INFO) << GREEN << "      Yaw Angle: " << yaw * 180.0 / M_PI << " degrees" << RESET;
-  LOG(INFO) << GREEN << "      IMU Scale: " << g_gravity_norm / mean_acce.norm() << RESET;
+  LOG(INFO) << GREEN << "      IMU Scale: " << g_gravity_norm / kf_init_mean_acce_.norm() << RESET;
 
   M3 R_yaw_inv = Eigen::AngleAxis<scalar>(-yaw, V3::UnitZ()).toRotationMatrix(); 
 
@@ -279,8 +300,8 @@ bool SuperLIO::kf_init(){
   options.num_iterations_ = g_kf_max_iterations;
   options.quit_eps_ = g_kf_quit_eps;
 
-  float imu_scale = g_gravity_norm / mean_acce.norm();
-  kf_->SetInitialConditions(options, mean_gyro, V3::Zero(), imu_scale, ref_gravity);
+  float imu_scale = g_gravity_norm / kf_init_mean_acce_.norm();
+  kf_->SetInitialConditions(options, kf_init_mean_gyro_, V3::Zero(), imu_scale, ref_gravity);
   auto state = kf_->GetSysState();
   state.R = SO3(rot);
   state.p = g_odom_robo.t_;        // By default, the robot frame is used as the reference origin.
@@ -324,6 +345,12 @@ bool SuperLIO::map_init(){
 
 void SuperLIO::stateProcess(){
   frame_num_++;
+  
+  // pcd save-only mode: highest priority, skip all LIO/IMU
+  if(g_pcd_save_mode.load()){
+    PCDSaveOnly();
+    return;
+  }
   
   // downsample_only mode has highest priority
   if(g_downsample_only){
@@ -436,6 +463,30 @@ void SuperLIO::caceData(){
     
     point_map_->clear();
     scan_wait_num = 0;
+  }
+}
+
+void SuperLIO::PCDSaveOnly(){
+  DownSampleOnly();
+
+  if(g_save_map && !ds_undistort_->empty()){
+    pcd_index_++;
+
+    SaveData save_data;
+    save_data.cloud_to_save.reset(new PointCloudType(*ds_undistort_));
+    save_data.pcd_index = pcd_index_;
+    save_data.timestamp = measures_.lidar.start_time;
+    save_data.position = V3(0, 0, 0);
+    save_data.orientation = Quat(1, 0, 0, 0);
+
+    {
+      std::lock_guard<std::mutex> lock(save_mutex_);
+      if(save_queue_.size() > 3){
+        save_queue_.pop();
+      }
+      save_queue_.push(std::move(save_data));
+    }
+    save_cv_.notify_one();
   }
 }
 

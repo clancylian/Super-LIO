@@ -43,6 +43,11 @@ public:
   void saveMap();
   void printTimeRecord();
 
+  void pauseProcessing();
+  void resumeProcessing();
+  bool isPaused() const;
+  void resetIMUIntegration();
+
 protected:
   struct OutputData {
     NavState state;
@@ -121,6 +126,8 @@ protected:
   std::condition_variable save_cv_;
   std::queue<SaveData> save_queue_;
   std::atomic<bool> save_running_{false};
+
+  std::atomic<bool> paused_{false};
 };
 
 } // namespace END.

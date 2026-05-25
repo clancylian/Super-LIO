@@ -82,6 +82,8 @@ public:
 
   BASIC::V3 GetGravity() const { return g_; }
 
+  void ResetIMUIntegration();
+
   bool init_ = false;
   bool Predict(const IMUData& imu, DynamicState& state_imu, DynamicState& state_robot);
 

@@ -4,6 +4,8 @@
 #include "lio/super_lio.h"
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <tf2_sensor_msgs/tf2_sensor_msgs.hpp>
+#include <thread>
+#include <chrono>
 
 #ifdef LIVOX_SUPPORT
 #include "livox_ros_driver2/msg/custom_msg.hpp"
@@ -1131,13 +1133,24 @@ void ROSWrapper::saveMapServiceCallback(const std_srvs::srv::Trigger::Request::S
   LOG(INFO) << GREEN << " ---> [Service] Save map service called" << RESET;
   
   if (super_lio_) {
-    // 调用SuperLIO的saveMap()方法保存地图
+    LOG(INFO) << YELLOW << " ---> [Service] Pausing LIO processing..." << RESET;
+    super_lio_->pauseProcessing();
+    
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    
+    LOG(INFO) << YELLOW << " ---> [Service] Saving map..." << RESET;
     super_lio_->saveMap();
-    // 调用printTimeRecord()方法，参照退出流程
     super_lio_->printTimeRecord();
-    LOG(INFO) << GREEN << " ---> [Service] Map saved successfully" << RESET;
+    
+    LOG(INFO) << YELLOW << " ---> [Service] Resuming LIO processing..." << RESET;
+    super_lio_->resumeProcessing();
+    
+    LOG(INFO) << YELLOW << " ---> [Service] Resetting IMU pre-integration..." << RESET;
+    super_lio_->resetIMUIntegration();
+    
+    LOG(INFO) << GREEN << " ---> [Service] Map saved successfully, LIO resumed" << RESET;
     response->success = true;
-    response->message = "Map saved successfully";
+    response->message = "Map saved successfully, LIO processing resumed and IMU pre-integration reset";
   } else {
     LOG(ERROR) << RED << " ---> [Service] SuperLIO instance not set" << RESET;
     response->success = false;

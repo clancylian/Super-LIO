@@ -215,6 +215,10 @@ void SuperLIO::stateWaitMapInit()
 }
 
 void SuperLIO::process(){
+  if(paused_.load()){
+    return;
+  }
+
   static bool priority_set = false;
   if (!priority_set) {
     set_realtime_priority(98);
@@ -1067,6 +1071,31 @@ void SuperLIO::OutputThread(){
 void SuperLIO::printTimeRecord(){
   if(!g_time_eva) return;
   time_record_.PrintAll();
+}
+
+
+void SuperLIO::pauseProcessing(){
+  paused_.store(true);
+  LOG(INFO) << YELLOW << " ---> [SuperLIO]: Processing paused" << RESET;
+}
+
+
+void SuperLIO::resumeProcessing(){
+  paused_.store(false);
+  LOG(INFO) << GREEN << " ---> [SuperLIO]: Processing resumed" << RESET;
+}
+
+
+bool SuperLIO::isPaused() const {
+  return paused_.load();
+}
+
+
+void SuperLIO::resetIMUIntegration(){
+  if(kf_){
+    kf_->ResetIMUIntegration();
+    LOG(INFO) << GREEN << " ---> [SuperLIO]: IMU pre-integration reset" << RESET;
+  }
 }
 
 } // namespace END.

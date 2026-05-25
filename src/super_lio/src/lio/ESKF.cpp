@@ -309,4 +309,19 @@ bool ESKF::UpdateObserve(ESKF::ObsFunc obs) {
   return true;
 }
 
+
+void ESKF::ResetIMUIntegration() {
+  forward_time_ = -1;
+  forward_last_imu_ = IMUData();
+  fw_R_ = R_;
+  fw_p_ = p_;
+  fw_v_ = v_;
+
+  last_imu_time_ = -1.0;
+  last_imu_ = IMUData();
+  last_obs_time_ = 0.0;
+  current_obs_time_ = 0.0;
+  current_time_ = 0.0;
+}
+
 }

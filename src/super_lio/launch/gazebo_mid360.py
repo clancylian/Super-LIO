@@ -141,8 +141,8 @@ def generate_launch_description():
             ('/lio/path', 'lio/path'),
             ('/lio/cloud_world', 'lio/cloud_world'),
             ('/lio/body/cloud', 'lio/body/cloud'),
-            ('/tf', 'tf'),
-            ('/tf_static', 'tf_static'),
+            ('/tf', '/tf'),
+            ('/tf_static', '/tf_static'),
         ]
     )
     ld.add_action(super_lio_node)
@@ -154,7 +154,7 @@ def generate_launch_description():
         name='static_transform_map_to_odom',
         parameters=[{'use_sim_time': DEFAULT_USE_SIM_TIME}],
         arguments=['0.0', '0.0', '0.0', '0.0', '0.0', '0.0', ns_map_frame, ns_odom_frame],
-        remappings=[('/tf_static', 'tf_static')],
+        remappings=[('/tf_static', '/tf_static')],
         output='screen'
     )
     ld.add_action(static_transform_map_to_odom)
@@ -165,7 +165,7 @@ def generate_launch_description():
         name='static_transform_odom_to_world',
         parameters=[{'use_sim_time': DEFAULT_USE_SIM_TIME}],
         arguments=['0.0', '0.0', '0.0', '0.0', '0.0', '0.0', ns_odom_frame, ns_world_frame],
-        remappings=[('/tf_static', 'tf_static')],
+        remappings=[('/tf_static', '/tf_static')],
         output='screen'
     )
     ld.add_action(static_transform_odom_to_world)
@@ -177,7 +177,7 @@ def generate_launch_description():
         name='static_transform_world_to_imu',
         parameters=[{'use_sim_time': DEFAULT_USE_SIM_TIME}],
         arguments=['0.0', '0.0', '0.0', '0.0', '0.0', '0.0', ns_world_frame, ns_imu_frame],
-        remappings=[('/tf_static', 'tf_static')],
+        remappings=[('/tf_static', '/tf_static')],
         output='screen'
     )
     ld.add_action(static_transform_world_to_imu)
@@ -188,7 +188,7 @@ def generate_launch_description():
         name='imu_to_livox_frame_tf',
         parameters=[{'use_sim_time': DEFAULT_USE_SIM_TIME}],
         arguments=['0.0', '0', '0.0', '0', '0.0', '0', ns_imu_frame, ns_livox_frame],
-        remappings=[('/tf_static', 'tf_static')],
+        remappings=[('/tf_static', '/tf_static')],
         output='screen'
     )
     ld.add_action(imu_to_livox_frame_tf)
@@ -201,7 +201,7 @@ def generate_launch_description():
         name='livox_frame_to_base_link_tf',
         parameters=[{'use_sim_time': DEFAULT_USE_SIM_TIME}],
         arguments=['-0.1', '0', '-0.1', '0', str(deg_to_rad(-30)), '0', 'mid360_robot/livox_frame/lidar', ns_base_link_frame],
-        remappings=[('/tf_static', 'tf_static')],
+        remappings=[('/tf_static', '/tf_static')],
         output='screen'
     )
     ld.add_action(livox_frame_to_base_link_tf)
@@ -213,7 +213,7 @@ def generate_launch_description():
         name='static_transform_world_to_base_footprint',
         parameters=[{'use_sim_time': DEFAULT_USE_SIM_TIME}],
         arguments=['0.0', '0.0', '0.0', '0.0', '0.0', '0.0', ns_world_frame, ns_base_frame],
-        remappings=[('/tf_static', 'tf_static')],
+        remappings=[('/tf_static', '/tf_static')],
         output='screen'
     )
     # ld.add_action(static_transform_world_to_base_footprint)

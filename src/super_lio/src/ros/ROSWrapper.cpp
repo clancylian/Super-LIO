@@ -490,7 +490,7 @@ void ROSWrapper::setupIO(){
 
 void ROSWrapper::imuHandler(const sensor_msgs::msg::Imu::SharedPtr msg){
   IMUData data;
-  data.secs = stampToSec(msg->header.stamp);
+  data.secs = this->now().seconds();
 
   V3 acc_raw(msg->linear_acceleration.x,
              msg->linear_acceleration.y,
@@ -586,7 +586,7 @@ void ROSWrapper::livoxHandler(const livox_ros_driver2::msg::CustomMsg::SharedPtr
       }
     }
   }
-  lidar_data.start_time = stampToSec(msg->header.stamp);
+  lidar_data.start_time = this->now().seconds();
   lidar_data.end_time   = lidar_data.start_time + offset_time;
   lidar_data.frame_id = msg->header.frame_id;
   lidar_buffer_.push_back(lidar_data);
@@ -611,7 +611,7 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
     pcl::fromROSMsg(*msg, pl_orig);
     lidar_data.pc->reserve(pl_orig.size() / g_filter_rate + 1);
     const double time_begin = pl_orig.points[0].timestamp;
-    lidar_data.start_time = time_begin;
+    lidar_data.start_time = this->now().seconds();
     for(std::size_t i = 0; i < pl_orig.size(); i += g_filter_rate)
     {
       auto& pt = pl_orig.points[i];
@@ -621,7 +621,7 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
       lidar_data.pc->emplace_back(
           pt.x, pt.y, pt.z, pt.intensity, offset_time);
     }
-    lidar_data.end_time = time_begin + offset_time;
+    lidar_data.end_time = lidar_data.start_time + offset_time;
     break;
   }
   case LID_TYPE::VEL_NCLT:
@@ -629,7 +629,7 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
     pcl::PointCloud<NCLT::Point> pl_orig;
     pcl::fromROSMsg(*msg, pl_orig);
     lidar_data.pc->reserve(pl_orig.size() / g_filter_rate + 1);
-    lidar_data.start_time = stampToSec(msg->header.stamp);
+    lidar_data.start_time = this->now().seconds();
     
     for(std::size_t i = 0; i < pl_orig.size(); i += g_filter_rate){
       auto& pt = pl_orig.points[i];
@@ -647,7 +647,7 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
     pcl::PointCloud<velodyne_ros::Point> pl_orig;
     pcl::fromROSMsg(*msg, pl_orig);
     lidar_data.pc->reserve(pl_orig.size() / g_filter_rate + 1);
-    lidar_data.start_time = stampToSec(msg->header.stamp);
+    lidar_data.start_time = this->now().seconds();
 
     for(std::size_t i = 0; i < pl_orig.size(); i += g_filter_rate){
       auto& pt = pl_orig.points[i];
@@ -664,7 +664,7 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
     pcl::PointCloud<ouster_ros::Point> pl_orig;
     pcl::fromROSMsg(*msg, pl_orig);
     lidar_data.pc->reserve(pl_orig.size() / g_filter_rate + 1);
-    lidar_data.start_time = stampToSec(msg->header.stamp);
+    lidar_data.start_time = this->now().seconds();
 
     for(std::size_t i = 0; i < pl_orig.size(); i += g_filter_rate){
       auto& pt = pl_orig.points[i];
@@ -682,7 +682,7 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
     pcl::PointCloud<pcl::PointXYZI> pl_orig;
     pcl::fromROSMsg(*msg, pl_orig);
     lidar_data.pc->reserve(pl_orig.size() / g_filter_rate + 1);
-    lidar_data.start_time = stampToSec(msg->header.stamp);
+    lidar_data.start_time = this->now().seconds();
 
     for(std::size_t i = 0; i < pl_orig.size(); i += g_filter_rate){
       auto& pt = pl_orig.points[i];
@@ -718,7 +718,7 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
         if (ts < min_time) min_time = ts;
         if (ts > max_time) max_time = ts;
       }
-      lidar_data.start_time = min_time;
+      lidar_data.start_time = this->now().seconds();
 
       for (int i = 0; i < plsize; i += g_filter_rate) {
         auto& pt = pl_orig.points[i];
@@ -731,14 +731,14 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
         lidar_data.pc->emplace_back(
             ros_x, ros_y, ros_z, pt.intensity, offset_time);
       }
-      lidar_data.end_time = max_time;
+      lidar_data.end_time = lidar_data.start_time + (max_time - min_time);
     } else {
       pcl::PointCloud<pcl::PointXYZI> pl_orig;
       pcl::fromROSMsg(*msg, pl_orig);
       int plsize = pl_orig.size();
       if (plsize == 0) return;
       lidar_data.pc->reserve(plsize / g_filter_rate + 1);
-      lidar_data.start_time = stampToSec(msg->header.stamp);
+      lidar_data.start_time = this->now().seconds();
 
       for (int i = 0; i < plsize; i += g_filter_rate) {
         auto& pt = pl_orig.points[i];
@@ -937,7 +937,7 @@ void ROSWrapper::pub_cloud_world(const CloudPtr& pc, double time){
   sensor_msgs::msg::PointCloud2 cloud;
   pcl::toROSMsg(*pc, cloud);
   cloud.header.frame_id = g_world_frame;
-  cloud.header.stamp = this->now();
+  cloud.header.stamp = toRosTime(time);
   pub_cloud_world_->publish(cloud);
 }
 
@@ -951,7 +951,7 @@ void ROSWrapper::pub_cloud_world_undistort_only(const CloudPtr& pc, double time,
     sensor_msgs::msg::PointCloud2 cloud_in, cloud_out;
     pcl::toROSMsg(*pc, cloud_in);
     cloud_in.header.frame_id = lidar_frame;
-    cloud_in.header.stamp = this->now();
+    cloud_in.header.stamp = toRosTime(time);
     
     tf2::doTransform(cloud_in, cloud_out, transform_stamped);
     cloud_out.header.frame_id = g_world_frame;
@@ -962,7 +962,7 @@ void ROSWrapper::pub_cloud_world_undistort_only(const CloudPtr& pc, double time,
     sensor_msgs::msg::PointCloud2 cloud;
     pcl::toROSMsg(*pc, cloud);
     cloud.header.frame_id = g_world_frame;
-    cloud.header.stamp = this->now();
+    cloud.header.stamp = toRosTime(time);
     pub_cloud_world_->publish(cloud);
   }
 }
@@ -972,7 +972,7 @@ void ROSWrapper::pub_cloud_body(const CloudPtr& pc, double time){
   sensor_msgs::msg::PointCloud2 cloud;
   pcl::toROSMsg(*pc, cloud);
   cloud.header.frame_id = g_imu_frame;
-  cloud.header.stamp = this->now();
+  cloud.header.stamp = toRosTime(time);
   pub_cloud_body_->publish(cloud);
 }
 
@@ -981,7 +981,7 @@ void ROSWrapper::pub_cloud_undistort_only(const CloudPtr& pc, double time, const
   sensor_msgs::msg::PointCloud2 cloud;
   pcl::toROSMsg(*pc, cloud);
   cloud.header.frame_id = lidar_frame;
-  cloud.header.stamp = this->now();
+  cloud.header.stamp = toRosTime(time);
   pub_cloud_body_->publish(cloud);
 }
 
@@ -993,7 +993,7 @@ void ROSWrapper::pub_cloud2planner(const CloudPtr& pc, double time){
   sensor_msgs::msg::PointCloud2 cloud;
   pcl::toROSMsg(*pc, cloud);
   cloud.header.frame_id = "world";
-  cloud.header.stamp = this->now();
+  cloud.header.stamp = toRosTime(time);
   pub_cloud2robot_->publish(cloud);
 }
 
@@ -1006,7 +1006,7 @@ void ROSWrapper::pub_cloud_body_pose(const CloudPtr& pc,
         "/lio/body/cloud_pose", rclcpp::QoS(rclcpp::KeepLast(2)).best_effort().durability_volatile());
   super_lio::msg::CloudPose cloud_pose;
   pcl::toROSMsg(*pc, cloud_pose.cloud);
-  cloud_pose.cloud.header.stamp = this->now();
+  cloud_pose.cloud.header.stamp = toRosTime(state.timestamp); 
   cloud_pose.pose.position.x = state.p[0];
   cloud_pose.pose.position.y = state.p[1];
   cloud_pose.pose.position.z = state.p[2];
@@ -1028,7 +1028,7 @@ void ROSWrapper::pub_cloud_world_pose(const CloudPtr& pc,
         "/lio/world/cloud_pose", rclcpp::QoS(rclcpp::KeepLast(2)).best_effort().durability_volatile());
   super_lio::msg::CloudPose cloud_pose;
   pcl::toROSMsg(*pc, cloud_pose.cloud);
-  cloud_pose.cloud.header.stamp = this->now();
+  cloud_pose.cloud.header.stamp = toRosTime(state.timestamp);  
   cloud_pose.pose.position.x = state.p[0];
   cloud_pose.pose.position.y = state.p[1];
   cloud_pose.pose.position.z = state.p[2];

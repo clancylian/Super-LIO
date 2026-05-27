@@ -555,8 +555,8 @@ void ROSWrapper::imuHandler(const sensor_msgs::msg::Imu::SharedPtr msg){
       odom_robo.pose.pose.orientation.w = q.w();
     }
 
-    odom_imu.header.stamp = msg->header.stamp;
-    odom_robo.header.stamp = msg->header.stamp;
+    odom_imu.header.stamp = this->now();
+    odom_robo.header.stamp = this->now();
     odom_imu.header.frame_id = g_world_frame;
     odom_robo.header.frame_id = g_world_frame;
     pub_imu_odom_->publish(odom_imu);
@@ -937,7 +937,7 @@ void ROSWrapper::pub_cloud_world(const CloudPtr& pc, double time){
   sensor_msgs::msg::PointCloud2 cloud;
   pcl::toROSMsg(*pc, cloud);
   cloud.header.frame_id = g_world_frame;
-  cloud.header.stamp = toRosTime(time);
+  cloud.header.stamp = this->now();
   pub_cloud_world_->publish(cloud);
 }
 
@@ -951,7 +951,7 @@ void ROSWrapper::pub_cloud_world_undistort_only(const CloudPtr& pc, double time,
     sensor_msgs::msg::PointCloud2 cloud_in, cloud_out;
     pcl::toROSMsg(*pc, cloud_in);
     cloud_in.header.frame_id = lidar_frame;
-    cloud_in.header.stamp = toRosTime(time);
+    cloud_in.header.stamp = this->now();
     
     tf2::doTransform(cloud_in, cloud_out, transform_stamped);
     cloud_out.header.frame_id = g_world_frame;
@@ -962,7 +962,7 @@ void ROSWrapper::pub_cloud_world_undistort_only(const CloudPtr& pc, double time,
     sensor_msgs::msg::PointCloud2 cloud;
     pcl::toROSMsg(*pc, cloud);
     cloud.header.frame_id = g_world_frame;
-    cloud.header.stamp = toRosTime(time);
+    cloud.header.stamp = this->now();
     pub_cloud_world_->publish(cloud);
   }
 }
@@ -972,7 +972,7 @@ void ROSWrapper::pub_cloud_body(const CloudPtr& pc, double time){
   sensor_msgs::msg::PointCloud2 cloud;
   pcl::toROSMsg(*pc, cloud);
   cloud.header.frame_id = g_imu_frame;
-  cloud.header.stamp = toRosTime(time);
+  cloud.header.stamp = this->now();
   pub_cloud_body_->publish(cloud);
 }
 
@@ -981,7 +981,7 @@ void ROSWrapper::pub_cloud_undistort_only(const CloudPtr& pc, double time, const
   sensor_msgs::msg::PointCloud2 cloud;
   pcl::toROSMsg(*pc, cloud);
   cloud.header.frame_id = lidar_frame;
-  cloud.header.stamp = toRosTime(time);
+  cloud.header.stamp = this->now();
   pub_cloud_body_->publish(cloud);
 }
 
@@ -993,7 +993,7 @@ void ROSWrapper::pub_cloud2planner(const CloudPtr& pc, double time){
   sensor_msgs::msg::PointCloud2 cloud;
   pcl::toROSMsg(*pc, cloud);
   cloud.header.frame_id = "world";
-  cloud.header.stamp = toRosTime(time);
+  cloud.header.stamp = this->now();
   pub_cloud2robot_->publish(cloud);
 }
 
@@ -1006,7 +1006,7 @@ void ROSWrapper::pub_cloud_body_pose(const CloudPtr& pc,
         "/lio/body/cloud_pose", rclcpp::QoS(rclcpp::KeepLast(2)).best_effort().durability_volatile());
   super_lio::msg::CloudPose cloud_pose;
   pcl::toROSMsg(*pc, cloud_pose.cloud);
-  cloud_pose.cloud.header.stamp = toRosTime(state.timestamp); 
+  cloud_pose.cloud.header.stamp = this->now();
   cloud_pose.pose.position.x = state.p[0];
   cloud_pose.pose.position.y = state.p[1];
   cloud_pose.pose.position.z = state.p[2];
@@ -1028,7 +1028,7 @@ void ROSWrapper::pub_cloud_world_pose(const CloudPtr& pc,
         "/lio/world/cloud_pose", rclcpp::QoS(rclcpp::KeepLast(2)).best_effort().durability_volatile());
   super_lio::msg::CloudPose cloud_pose;
   pcl::toROSMsg(*pc, cloud_pose.cloud);
-  cloud_pose.cloud.header.stamp = toRosTime(state.timestamp);  
+  cloud_pose.cloud.header.stamp = this->now();
   cloud_pose.pose.position.x = state.p[0];
   cloud_pose.pose.position.y = state.p[1];
   cloud_pose.pose.position.z = state.p[2];

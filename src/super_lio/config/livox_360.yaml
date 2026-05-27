@@ -41,15 +41,15 @@
     # 最大有效距离(米)，大于此距离的点被剔除，用于去除远距离噪声点
     lio.sensor.maxrange: 100.0
     # 点云采样间隔，每隔N个点取1个。1=不降采样; 3=每3个点取1个，减少计算量
-    lio.sensor.filter_rate: 3
+    lio.sensor.filter_rate: 1
     # 是否对去畸变后的点云进行体素滤波降采样
     lio.sensor.enable_downsample: true
     # 点云体素滤波的体素大小(米)，值越大点云越稀疏，计算越快
     lio.sensor.voxel_fliter_size: 0.25
     # 是否启用强度滤波，剔除低强度点
-    lio.sensor.intensity_filter_en: false
+    lio.sensor.intensity_filter_en: true
     # 强度滤波阈值，低于此值的点被剔除（仅intensity_filter_en为true时生效）
-    lio.sensor.intensity_min: 0.0
+    lio.sensor.intensity_min: 10.0
     # 当地重力加速度大小(m/s²)，用于IMU初始化和重力对齐，影响定位精度
     lio.sensor.gravity_norm: 9.8066
     # IMU类型编号:
@@ -133,7 +133,7 @@
     
     # ======================== 动态物体去除参数 ========================
     # 是否启用动态物体去除功能
-    lio.dynamic_removal.enable: false
+    lio.dynamic_removal.enable: true
     # 动态物体去除方法:
     #   0 = Temporal (时序方法，基于多帧一致性检测)
     #   1 = Raycast (光线投射方法，基于可见性检测)
@@ -147,4 +147,4 @@
     # 光线投射方法的最小命中次数阈值（method=1时生效）
     lio.dynamic_removal.raycast_min_hits: 2
     # 是否去除孤立体素点（无邻居的离散点）
-    lio.dynamic_removal.isolated_removal: true
+    lio.dynamic_removal.isolated_removal: false

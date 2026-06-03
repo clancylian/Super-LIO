@@ -558,7 +558,9 @@ void ROSWrapper::imuHandler(const sensor_msgs::msg::Imu::SharedPtr msg){
     odom_imu.header.stamp = this->now();
     odom_robo.header.stamp = this->now();
     odom_imu.header.frame_id = g_world_frame;
+    odom_imu.child_frame_id = g_imu_frame;
     odom_robo.header.frame_id = g_world_frame;
+    odom_robo.child_frame_id = "base_link";
     pub_imu_odom_->publish(odom_imu);
     pub_robo_odom_->publish(odom_robo);
   }
@@ -802,6 +804,7 @@ bool ROSWrapper::sync_measure(MeasureGroup& meas){
 void ROSWrapper::pub_odom(const NavState& state){
   nav_msgs::msg::Odometry odom;
   odom.header.frame_id = g_world_frame;
+  odom.child_frame_id = g_imu_frame;
 
   odom.header.stamp = toRosTime(state.timestamp);
   odom.pose.pose.position.x = state.p[0];

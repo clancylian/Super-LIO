@@ -573,9 +573,10 @@ void SuperLIO::caceSCPGOData(){
 
   // Compute delta from previous pose
   BASIC::SE3 delta = sc_pgo_pose_prev_.inverse() * current_pose;
-  float dx = std::abs(delta.p_(0));
-  float dy = std::abs(delta.p_(1));
-  float dz = std::abs(delta.p_(2));
+  V3 trans = delta.t();
+  float dx = std::abs(trans(0));
+  float dy = std::abs(trans(1));
+  float dz = std::abs(trans(2));
   float dtrans = std::sqrt(dx*dx + dy*dy + dz*dz);
 
   // Extract rotation angles

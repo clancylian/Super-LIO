@@ -100,4 +100,9 @@ namespace LI2Sup{
   int   g_dynamic_removal_raycast_min_hits = 2;
   bool  g_dynamic_removal_isolated_removal = true;
 
+  /// for SC-PGO offline processing output
+  bool  g_sc_pgo_enable = false;
+  float g_sc_pgo_keyframe_gap = 5.0f;
+  float g_sc_pgo_keyframe_deg_gap = 10.0f;
+
 }

@@ -124,8 +124,11 @@ void SuperLIO::init(){
       int deleted_count = 0;
       for(const auto& entry : fs::directory_iterator(pcd_folder)){
         std::string filename = entry.path().filename().string();
-        if(entry.path().extension() == ".pcd" &&
-           filename.find(g_pcd_prefix + "scans_") != std::string::npos){
+        // Match original PCD fragments: {prefix}scans_*.pcd  and filtered fragments: filtered_{prefix}scans_*.pcd
+        bool is_scan_pcd = (entry.path().extension() == ".pcd" &&
+                           (filename.find(g_pcd_prefix + "scans_") != std::string::npos ||
+                            filename.find("filtered_" + g_pcd_prefix + "scans_") != std::string::npos));
+        if(is_scan_pcd){
           try{
             fs::remove(entry.path());
             deleted_count++;
@@ -155,6 +158,37 @@ void SuperLIO::init(){
     
     save_running_ = true;
     save_thread_ = std::thread(&SuperLIO::SaveThread, this);
+
+    // SC-PGO offline output init
+    if(g_sc_pgo_enable){
+      std::string scans_dir = save_map_dir + "/Scans";
+      
+      // Clean old Scans directory
+      if(fs::exists(scans_dir)){
+        for(const auto& entry : fs::directory_iterator(scans_dir)){
+          try{
+            fs::remove(entry.path());
+          } catch(const std::exception& e){
+            LOG(WARNING) << RED << " ---> Failed to delete old SC-PGO file: " 
+                        << entry.path().filename().string() << " : " << e.what() << RESET;
+          }
+        }
+      } else {
+        fs::create_directories(scans_dir);
+      }
+      
+      // Open odom_poses.txt (truncate)
+      sc_pgo_odom_file_.open(save_map_dir + "/odom_poses.txt", std::ios::out | std::ios::trunc);
+      if(!sc_pgo_odom_file_.is_open()){
+        LOG(WARNING) << RED << " ---> Failed to open odom_poses.txt for SC-PGO output" << RESET;
+      }
+      
+      sc_pgo_index_ = 0;
+      sc_pgo_first_ = true;
+      
+      LOG(INFO) << GREEN << " ---> [SC-PGO] Output enabled, saving to " 
+                << scans_dir << RESET;
+    }
   }
 
   LOG(INFO) << GREEN << " ---> [SuperLIO]: initialized." << RESET;
@@ -338,6 +372,7 @@ void SuperLIO::stateProcess(){
     }
     Output();
     caceData();
+    caceSCPGOData();
     return;
   }
   
@@ -355,6 +390,7 @@ void SuperLIO::stateProcess(){
     }
     Output();
     caceData();
+    caceSCPGOData();
     return;
   }
   if(g_time_eva){
@@ -370,6 +406,7 @@ void SuperLIO::stateProcess(){
   }
   Output();
   caceData();
+  caceSCPGOData();
 }
 
 
@@ -492,6 +529,98 @@ void SuperLIO::SaveThread(){
 }
 
 
+void SuperLIO::caceSCPGOData(){
+  if(!g_sc_pgo_enable) return;
+  if(!g_save_map) return;
+  
+  auto state = kf_->GetNavState();
+  BASIC::SE3 current_pose(state.R.R_, state.p);
+
+  // Initialize first pose
+  if(sc_pgo_first_){
+    sc_pgo_pose_prev_ = current_pose;
+    sc_pgo_trans_accum_ = 0.0f;
+    sc_pgo_rot_accum_ = 0.0f;
+    sc_pgo_first_ = false;
+
+    // Save first frame always as keyframe
+    std::string save_map_dir = g_save_map_dir;
+    if (!save_map_dir.empty() && save_map_dir[0] != '/') {
+      save_map_dir = g_root_dir + save_map_dir;
+    }
+
+    // Save body-frame scan
+    if(scan_undistort_full_ && !scan_undistort_full_->empty()){
+      std::stringstream ss;
+      ss << std::setw(6) << std::setfill('0') << sc_pgo_index_;
+      std::string pcd_path = save_map_dir + "/Scans/" + ss.str() + ".pcd";
+      pcl::io::savePCDFileBinary(pcd_path, *scan_undistort_full_);
+      sc_pgo_index_++;
+    }
+
+    // Write KITTI-format pose
+    if(sc_pgo_odom_file_.is_open()){
+      Eigen::Matrix3f R = state.R.R_.cast<float>();
+      Eigen::Vector3f t = state.p.cast<float>();
+      sc_pgo_odom_file_ << std::fixed << std::setprecision(6)
+                        << R(0,0) << " " << R(0,1) << " " << R(0,2) << " " << t(0) << " "
+                        << R(1,0) << " " << R(1,1) << " " << R(1,2) << " " << t(1) << " "
+                        << R(2,0) << " " << R(2,1) << " " << R(2,2) << " " << t(2) << "\n";
+      sc_pgo_odom_file_.flush();
+    }
+    return;
+  }
+
+  // Compute delta from previous pose
+  BASIC::SE3 delta = sc_pgo_pose_prev_.inverse() * current_pose;
+  float dx = std::abs(delta.p_(0));
+  float dy = std::abs(delta.p_(1));
+  float dz = std::abs(delta.p_(2));
+  float dtrans = std::sqrt(dx*dx + dy*dy + dz*dz);
+
+  // Extract rotation angles
+  Eigen::Matrix3f R = delta.R_.cast<float>();
+  Eigen::Vector3f euler = R.eulerAngles(0, 1, 2);
+  float drot = std::abs(euler(0)) + std::abs(euler(1)) + std::abs(euler(2));
+
+  sc_pgo_trans_accum_ += dtrans;
+  sc_pgo_rot_accum_ += drot;
+
+  float kf_rad_gap = g_sc_pgo_keyframe_deg_gap * M_PI / 180.0f;
+
+  if(sc_pgo_trans_accum_ > g_sc_pgo_keyframe_gap || sc_pgo_rot_accum_ > kf_rad_gap){
+    sc_pgo_trans_accum_ = 0.0f;
+    sc_pgo_rot_accum_ = 0.0f;
+    sc_pgo_pose_prev_ = current_pose;
+
+    std::string save_map_dir = g_save_map_dir;
+    if (!save_map_dir.empty() && save_map_dir[0] != '/') {
+      save_map_dir = g_root_dir + save_map_dir;
+    }
+
+    // Save body-frame undistorted scan
+    if(scan_undistort_full_ && !scan_undistort_full_->empty()){
+      std::stringstream ss;
+      ss << std::setw(6) << std::setfill('0') << sc_pgo_index_;
+      std::string pcd_path = save_map_dir + "/Scans/" + ss.str() + ".pcd";
+      pcl::io::savePCDFileBinary(pcd_path, *scan_undistort_full_);
+      sc_pgo_index_++;
+    }
+
+    // Append KITTI-format pose
+    if(sc_pgo_odom_file_.is_open()){
+      Eigen::Matrix3f Rm = state.R.R_.cast<float>();
+      Eigen::Vector3f tm = state.p.cast<float>();
+      sc_pgo_odom_file_ << std::fixed << std::setprecision(6)
+                        << Rm(0,0) << " " << Rm(0,1) << " " << Rm(0,2) << " " << tm(0) << " "
+                        << Rm(1,0) << " " << Rm(1,1) << " " << Rm(1,2) << " " << tm(1) << " "
+                        << Rm(2,0) << " " << Rm(2,1) << " " << Rm(2,2) << " " << tm(2) << "\n";
+      sc_pgo_odom_file_.flush();
+    }
+  }
+}
+
+
 void SuperLIO::ProcessCaceMap(){
   namespace fs = std::filesystem;
 
@@ -501,6 +630,11 @@ void SuperLIO::ProcessCaceMap(){
   }
 
   std::string pcd_folder = save_map_dir + "/PCD";
+  
+  // When dynamic removal is enabled, merge filtered_ files; otherwise merge original scans_
+  std::string scan_prefix = g_dynamic_removal_enable ? 
+      ("filtered_" + g_pcd_prefix + "scans_") : (g_pcd_prefix + "scans_");
+  
   std::string output_map_name;
   if(g_dynamic_removal_enable){
     size_t dot_pos = g_map_name.find_last_of('.');
@@ -513,52 +647,150 @@ void SuperLIO::ProcessCaceMap(){
     output_map_name = save_map_dir + "/" + g_map_name;
   }
 
-  LOG(INFO) << YELLOW << " ---> Merging PCD fragments in: " << pcd_folder << RESET;
-
-  PointCloudType::Ptr merged_map(new PointCloudType());
-
-  int count = 0;
+  // Collect and sort matching PCD files
+  std::vector<std::string> pcd_files;
   for (const auto& entry : fs::directory_iterator(pcd_folder)) {
     if (entry.path().extension() == ".pcd" &&
-      entry.path().filename().string().find(g_pcd_prefix + "scans_") != std::string::npos) {
-      PointCloudType::Ptr tmp_cloud(new PointCloudType());
-      if (pcl::io::loadPCDFile<PointType>(entry.path().string(), *tmp_cloud) == 0) {
-        *merged_map += *tmp_cloud;
-        count++;
-        // LOG(INFO) << GREEN << " ---> Merged: " << entry.path().filename().string() 
-        //           << "   size: " << tmp_cloud->size() << RESET;
-      } else {
-        LOG(WARNING) << RED << " ---> Failed to load: " << entry.path().string() << RESET;
-      }
+        entry.path().filename().string().find(scan_prefix) != std::string::npos) {
+      pcd_files.push_back(entry.path().string());
     }
   }
+  std::sort(pcd_files.begin(), pcd_files.end());
 
-  LOG(INFO) << YELLOW << " ---> Total merged fragments: " << count << RESET;
+  if (pcd_files.empty()) {
+    LOG(WARNING) << RED << " ---> No matching PCD fragments found with prefix '" << scan_prefix << "'" << RESET;
+    return;
+  }
 
-  PointCloudType filtered_map;
+  LOG(INFO) << YELLOW << " ---> Merging " << pcd_files.size() << " PCD fragments in: " << pcd_folder << RESET;
 
-  if(g_if_filter){
-    LOG(INFO) << YELLOW << " ---> Downsampling merged map before final save..." << RESET;
+  if (!g_if_filter) {
+    // Streaming binary merge: read header to count total points, then concatenate binary data
+    // This avoids loading all point clouds into memory at once
+    LOG(INFO) << YELLOW << " ---> Streaming merge (no downsample) ..." << RESET;
+
+    // Step 1: Count total points and extract header template from first file
+    size_t total_points = 0;
+    std::string header_template;
+    bool first = true;
+
+    for (const auto& file : pcd_files) {
+      pcl::PCLPointCloud2 cloud2;
+      pcl::PCDReader reader;
+      if (reader.readHeader(file, cloud2) == 0) {
+        total_points += cloud2.width * cloud2.height;
+        if (first) {
+          // Read the ASCII header from the first file to use as template
+          std::ifstream ifs(file, std::ios::binary);
+          std::string line;
+          while (std::getline(ifs, line)) {
+            header_template += line + "\n";
+            if (line.find("DATA") == 0) break;
+          }
+          first = false;
+        }
+      } else {
+        LOG(WARNING) << RED << " ---> Failed to read header: " << file << RESET;
+      }
+    }
+
+    if (total_points == 0) {
+      LOG(WARNING) << RED << " ---> No points to merge" << RESET;
+      return;
+    }
+
+    // Step 2: Write output file header with correct total point count
+    std::string updated_header;
+    std::istringstream header_stream(header_template);
+    std::string line;
+    while (std::getline(header_stream, line)) {
+      if (line.find("POINTS ") == 0) {
+        updated_header += "POINTS " + std::to_string(total_points) + "\n";
+      } else if (line.find("WIDTH ") == 0) {
+        updated_header += "WIDTH " + std::to_string(total_points) + "\n";
+      } else {
+        updated_header += line + "\n";
+      }
+    }
+
+    std::ofstream ofs(output_map_name, std::ios::binary);
+    if (!ofs.is_open()) {
+      LOG(ERROR) << RED << " ---> Failed to open output file: " << output_map_name << RESET;
+      return;
+    }
+    ofs << updated_header;
+
+    // Step 3: Append binary data from each file without loading entire cloud into memory
+    for (const auto& file : pcd_files) {
+      std::ifstream ifs(file, std::ios::binary);
+      if (!ifs.is_open()) {
+        LOG(WARNING) << RED << " ---> Failed to open: " << file << RESET;
+        continue;
+      }
+
+      // Seek to end of header ("DATA binary\n" or "DATA ascii\n")
+      std::string data_line;
+      while (std::getline(ifs, data_line)) {
+        if (data_line.find("DATA") == 0) break;
+      }
+      size_t data_offset = static_cast<size_t>(ifs.tellg());
+
+      // Get binary data size
+      ifs.seekg(0, std::ios::end);
+      size_t file_size = static_cast<size_t>(ifs.tellg());
+      if (file_size <= data_offset) continue;
+
+      size_t binary_size = file_size - data_offset;
+
+      // Read and write binary data in chunks
+      ifs.seekg(static_cast<std::streamoff>(data_offset), std::ios::beg);
+      const size_t chunk_size = 1024 * 1024; // 1MB chunks
+      std::vector<char> buffer(chunk_size);
+      size_t remaining = binary_size;
+      while (remaining > 0) {
+        size_t to_read = std::min(chunk_size, remaining);
+        ifs.read(buffer.data(), to_read);
+        ofs.write(buffer.data(), to_read);
+        remaining -= to_read;
+      }
+    }
+    ofs.close();
+
+    LOG(INFO) << GREEN << " ---> Streaming merge done: " << total_points << " points" << RESET;
+  } else {
+    // With downsample: load one-by-one into merged_map (voxel grid needs all points)
+    LOG(INFO) << YELLOW << " ---> Merge with downsampling ..." << RESET;
+
+    PointCloudType::Ptr merged_map(new PointCloudType());
+    int count = 0;
+    for (const auto& file : pcd_files) {
+      PointCloudType::Ptr tmp_cloud(new PointCloudType());
+      if (pcl::io::loadPCDFile<PointType>(file, *tmp_cloud) == 0) {
+        *merged_map += *tmp_cloud;
+        count++;
+      } else {
+        LOG(WARNING) << RED << " ---> Failed to load: " << file << RESET;
+      }
+    }
+
+    LOG(INFO) << YELLOW << " ---> Total merged fragments: " << count << RESET;
+
+    PointCloudType filtered_map;
     pcl::VoxelGrid<PointType> voxel_filter;
     voxel_filter.setLeafSize(g_map_ds_size, g_map_ds_size, g_map_ds_size);
-    
     voxel_filter.setInputCloud(merged_map);
     voxel_filter.filter(filtered_map);
-  }else{
-    LOG(INFO) << YELLOW << " ---> Not Downsampling merged map before final save..." << RESET;
-    filtered_map = *merged_map;
-  }
-  
-  if (filtered_map.size() > 0) {
-    filtered_map.width = filtered_map.size();
-    filtered_map.height = 1;
-    filtered_map.is_dense = false;
-  }
 
-  pcl::io::savePCDFileBinary(output_map_name, filtered_map);
+    if (filtered_map.size() > 0) {
+      filtered_map.width = filtered_map.size();
+      filtered_map.height = 1;
+      filtered_map.is_dense = false;
+    }
+    pcl::io::savePCDFileBinary(output_map_name, filtered_map);
+    LOG(INFO) << GREEN << " ---> Final map size: " << filtered_map.size() << RESET;
+  }
 
   LOG(INFO) << GREEN << " ---> Final map saved to: " << output_map_name << RESET;
-  LOG(INFO) << GREEN << " ---> Final map size: " << filtered_map.size() << RESET;
 }
 
 
@@ -596,18 +828,17 @@ void SuperLIO::saveMap(){
     LOG(INFO) << GREEN << " ---> Save last cace success. " << RESET;
     
     if(g_dynamic_removal_enable){
-      LOG(INFO) << YELLOW << " ---> Running dynamic point removal ... " << RESET;
+      LOG(INFO) << YELLOW << " ---> Running dynamic point removal (per-frame mode) ... " << RESET;
       std::string save_map_dir = g_save_map_dir;
       if (!save_map_dir.empty() && save_map_dir[0] != '/') {
         save_map_dir = g_root_dir + save_map_dir;
       }
       std::string pcd_folder = save_map_dir + "/PCD";
-      std::string filtered_output = save_map_dir + "/" + g_map_name;
       
       std::stringstream cmd;
       cmd << "taskset -c 0,1,2,3,4,5,6 ros2 run super_lio dynamic_remove_node"
           << " --input_dir " << pcd_folder
-          << " --output_file " << filtered_output
+          << " --output_dir " << pcd_folder
           << " --grid_size " << g_dynamic_removal_grid_size
           << " --min_neighbors " << g_dynamic_removal_min_neighbors
           << " --method " << g_dynamic_removal_method;
@@ -629,7 +860,7 @@ void SuperLIO::saveMap(){
       LOG(INFO) << YELLOW << " ---> Executing: " << cmd.str() << RESET;
       int ret = system(cmd.str().c_str());
       if(ret == 0) {
-        LOG(INFO) << GREEN << " ---> Dynamic point removal success. Output: " << filtered_output << RESET;
+        LOG(INFO) << GREEN << " ---> Dynamic point removal success. Filtered PCDs saved to: " << pcd_folder << RESET;
       } else {
         LOG(WARNING) << RED << " ---> Dynamic point removal failed with code: " << ret << RESET;
       }
@@ -638,6 +869,13 @@ void SuperLIO::saveMap(){
     LOG(INFO) << YELLOW << " ---> Process cace map ... " << RESET;
     ProcessCaceMap();
     LOG(INFO) << GREEN << " ---> Process cace map success. " << RESET;
+    
+    // Close SC-PGO output file
+    if(g_sc_pgo_enable && sc_pgo_odom_file_.is_open()){
+      sc_pgo_odom_file_.close();
+      LOG(INFO) << GREEN << " ---> [SC-PGO] Output complete: " 
+                << sc_pgo_index_ << " keyframes saved" << RESET;
+    }
     return;
   }
 
@@ -662,6 +900,13 @@ void SuperLIO::saveMap(){
     pcl::io::savePCDFileBinary(map_name, latst_map);
     LOG(INFO) << GREEN << " ---> Save map success. File: " << map_name << RESET;
     LOG(INFO) << GREEN << " ---> Map size: " << latst_map.size() << RESET;
+  }
+  
+  // Close SC-PGO output file
+  if(g_sc_pgo_enable && sc_pgo_odom_file_.is_open()){
+    sc_pgo_odom_file_.close();
+    LOG(INFO) << GREEN << " ---> [SC-PGO] Output complete: " 
+              << sc_pgo_index_ << " keyframes saved" << RESET;
   }
 }
 

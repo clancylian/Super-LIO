@@ -292,6 +292,29 @@ void LoadParamFromRos(rclcpp::Node& node)
   LOG(INFO) << GREEN << " ---> [Param] dynamic_removal/isolated_removal: "
             << (g_dynamic_removal_isolated_removal ? "true" : "false") << RESET;
 
+  // ================= SC-PGO offline output =================
+  node.declare_parameter<bool>("lio.sc_pgo.enable", false);
+  node.get_parameter("lio.sc_pgo.enable", g_sc_pgo_enable);
+
+  node.declare_parameter<double>("lio.sc_pgo.keyframe_gap", 5.0);
+  double temp_kf_gap;
+  node.get_parameter("lio.sc_pgo.keyframe_gap", temp_kf_gap);
+  g_sc_pgo_keyframe_gap = static_cast<float>(temp_kf_gap);
+
+  node.declare_parameter<double>("lio.sc_pgo.keyframe_deg_gap", 10.0);
+  double temp_kf_deg_gap;
+  node.get_parameter("lio.sc_pgo.keyframe_deg_gap", temp_kf_deg_gap);
+  g_sc_pgo_keyframe_deg_gap = static_cast<float>(temp_kf_deg_gap);
+
+  LOG(INFO) << GREEN << " ---> [Param] sc_pgo/enable: "
+            << (g_sc_pgo_enable ? "true" : "false") << RESET;
+
+  LOG(INFO) << GREEN << " ---> [Param] sc_pgo/keyframe_gap: "
+            << g_sc_pgo_keyframe_gap << RESET;
+
+  LOG(INFO) << GREEN << " ---> [Param] sc_pgo/keyframe_deg_gap: "
+            << g_sc_pgo_keyframe_deg_gap << RESET;
+
   // ================= lio only undistort mode =================
   node.declare_parameter<bool>("lio.lio_only_undistort", false);
   node.get_parameter("lio.lio_only_undistort", g_lio_only_undistort);

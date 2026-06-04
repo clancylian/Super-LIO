@@ -14,6 +14,7 @@
 #include <atomic>
 
 #include <pcl/io/pcd_io.h>
+#include <pcl/PCLPointCloud2.h>
 #include <pcl/common/transforms.h>
 #include <pcl/filters/voxel_grid.h>
 
@@ -81,6 +82,7 @@ protected:
   void OutputThread();
   void SaveThread();
   void caceData();
+  void caceSCPGOData();
   void ProcessCaceMap();
 
   using StateFn = void (SuperLIO::*)();
@@ -126,6 +128,14 @@ protected:
   std::condition_variable save_cv_;
   std::queue<SaveData> save_queue_;
   std::atomic<bool> save_running_{false};
+
+  // SC-PGO offline output
+  int sc_pgo_index_ = 0;
+  BASIC::SE3 sc_pgo_pose_prev_;
+  float sc_pgo_trans_accum_ = 0.0f;
+  float sc_pgo_rot_accum_ = 0.0f;
+  bool sc_pgo_first_ = true;
+  std::ofstream sc_pgo_odom_file_;
 
   std::atomic<bool> paused_{false};
 };

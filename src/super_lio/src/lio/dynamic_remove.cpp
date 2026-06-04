@@ -48,6 +48,7 @@ struct Config {
     int frame_window = 1;
     std::string input_dir = "./PCD";
     std::string output_file = "./filtered_map.pcd";
+    std::string output_dir = "";          // if set, save per-frame filtered PCDs here (prefix "filtered_")
     bool enable_isolated_removal = true;
     bool verbose = true;
     RemovalMethod method = RemovalMethod::TEMPORAL;
@@ -136,7 +137,7 @@ struct FrameData {
     int index;
 };
 
-std::vector<FrameData> loadPointCloudFramesWithOdom(const std::string& input_dir, bool verbose) {
+std::vector<FrameData> loadPointCloudFramesWithOdom(const std::string& input_dir, bool verbose, std::vector<std::string>* out_filenames = nullptr) {
     std::vector<FrameData> frames;
     std::vector<std::pair<std::string, std::string>> pcd_txt_files;
 
@@ -197,6 +198,10 @@ std::vector<FrameData> loadPointCloudFramesWithOdom(const std::string& input_dir
             frame.index = index++;
             frames.push_back(frame);
 
+            if (out_filenames) {
+                out_filenames->push_back(pcd_file);
+            }
+
             if (verbose) {
                 LOG(INFO) << "Loaded: " << pcd_file << " (" << valid_cloud->size() 
                           << " points, odom: " << odom.position.transpose() << ")";
@@ -209,7 +214,7 @@ std::vector<FrameData> loadPointCloudFramesWithOdom(const std::string& input_dir
     return frames;
 }
 
-std::vector<CloudPtr> loadPointCloudFrames(const std::string& input_dir, bool verbose, const std::string& scans_prefix = "") {
+std::vector<CloudPtr> loadPointCloudFrames(const std::string& input_dir, bool verbose, const std::string& scans_prefix = "", std::vector<std::string>* out_filenames = nullptr) {
     std::vector<CloudPtr> frames;
     std::vector<std::string> pcd_files;
 
@@ -242,6 +247,9 @@ std::vector<CloudPtr> loadPointCloudFrames(const std::string& input_dir, bool ve
             valid_cloud->height = 1;
             valid_cloud->is_dense = true;
             frames.push_back(valid_cloud);
+            if (out_filenames) {
+                out_filenames->push_back(file);
+            }
             if (verbose) {
                 LOG(INFO) << "Loaded: " << file << " (" << valid_cloud->size() << " points)";
             }
@@ -255,7 +263,8 @@ std::vector<CloudPtr> loadPointCloudFrames(const std::string& input_dir, bool ve
 
 CloudPtr filterDynamicPointsTemporal(
     const std::vector<CloudPtr>& frames,
-    const Config& config)
+    const Config& config,
+    const std::vector<std::string>* in_filenames = nullptr)
 {
     if (frames.empty()) {
         LOG(WARNING) << "No frames to process";
@@ -274,11 +283,22 @@ CloudPtr filterDynamicPointsTemporal(
         }
     }
 
+    // Per-frame filtered clouds (used when output_dir is set)
+    std::vector<CloudPtr> per_frame_filtered;
+    if (!config.output_dir.empty()) {
+        per_frame_filtered.resize(n_frames);
+        for (size_t i = 0; i < n_frames; ++i) {
+            per_frame_filtered[i].reset(new PointCloudType());
+        }
+    }
+
     std::vector<PointType, Eigen::aligned_allocator<PointType>> filtered_points;
     std::vector<int> frame_removed_counts(n_frames, 0);
     int total_points = 0;
     int removed_points = 0;
 
+    if (config.output_dir.empty()) {
+        // Original behavior: collect all filtered points into one vector
 #pragma omp parallel reduction(+:total_points, removed_points)
     {
         std::vector<PointType, Eigen::aligned_allocator<PointType>> local_filtered_points;
@@ -323,6 +343,48 @@ CloudPtr filterDynamicPointsTemporal(
 #pragma omp critical
         filtered_points.insert(filtered_points.end(), local_filtered_points.begin(), local_filtered_points.end());
     }
+    } else {
+        // Per-frame output mode: collect per-frame filtered clouds
+#pragma omp parallel reduction(+:total_points, removed_points)
+    {
+#pragma omp for schedule(dynamic)
+        for (size_t frame_idx = 0; frame_idx < n_frames; ++frame_idx) {
+            const CloudPtr& frame = frames[frame_idx];
+            int frame_removed = 0;
+
+            for (const auto& point : frame->points) {
+                total_points++;
+                VoxelKey key = pointToVoxelKey(point, config.grid_size);
+
+                bool is_dynamic = true;
+                int window = config.frame_window;
+
+                for (int offset = -window; offset <= window; ++offset) {
+                    if (offset == 0) continue;
+                    
+                    int neighbor_idx = static_cast<int>(frame_idx) + offset;
+                    if (neighbor_idx < 0 || neighbor_idx >= static_cast<int>(n_frames)) {
+                        continue;
+                    }
+
+                    if (grids[neighbor_idx].isOccupied(key)) {
+                        is_dynamic = false;
+                        break;
+                    }
+                }
+
+                if (is_dynamic) {
+                    removed_points++;
+                    frame_removed++;
+                } else {
+                    per_frame_filtered[frame_idx]->points.push_back(point);
+                }
+            }
+
+            frame_removed_counts[frame_idx] = frame_removed;
+        }
+    }
+    }
 
     for (size_t frame_idx = 0; frame_idx < n_frames; ++frame_idx) {
         if (config.verbose && frame_removed_counts[frame_idx] > 0) {
@@ -330,16 +392,54 @@ CloudPtr filterDynamicPointsTemporal(
         }
     }
 
+    if (config.verbose) {
+        LOG(INFO) << "Temporal dynamic removal: " << removed_points << " / " << total_points 
+                  << " points removed (" << (100.0 * removed_points / total_points) << "%)";
+    }
+
+    // Per-frame output mode: save each frame's filtered cloud as filtered_*.pcd
+    if (!config.output_dir.empty()) {
+        if (!fs::exists(config.output_dir)) {
+            fs::create_directories(config.output_dir);
+        }
+        int saved_count = 0;
+        for (size_t frame_idx = 0; frame_idx < n_frames; ++frame_idx) {
+            auto& pf_cloud = per_frame_filtered[frame_idx];
+            pf_cloud->width = pf_cloud->points.size();
+            pf_cloud->height = 1;
+            pf_cloud->is_dense = true;
+
+            // Generate filename: filtered_{original_basename}
+            std::string basename;
+            if (in_filenames && frame_idx < in_filenames->size()) {
+                basename = fs::path((*in_filenames)[frame_idx]).filename().string();
+            } else {
+                basename = "scans_" + std::to_string(frame_idx) + ".pcd";
+            }
+            std::string filtered_name = config.output_dir + "/filtered_" + basename;
+
+            if (pcl::io::savePCDFileBinary(filtered_name, *pf_cloud) == 0) {
+                saved_count++;
+                if (config.verbose) {
+                    LOG(INFO) << "Saved filtered frame: " << filtered_name 
+                              << " (" << pf_cloud->size() << " points)";
+                }
+            } else {
+                LOG(WARNING) << "Failed to save filtered frame: " << filtered_name;
+            }
+        }
+        LOG(INFO) << "Per-frame output: " << saved_count << " filtered PCDs saved to " << config.output_dir;
+
+        // Return empty cloud
+        CloudPtr empty_cloud(new PointCloudType());
+        return empty_cloud;
+    }
+
     CloudPtr filtered_cloud(new PointCloudType());
     filtered_cloud->points = std::move(filtered_points);
     filtered_cloud->width = filtered_cloud->points.size();
     filtered_cloud->height = 1;
     filtered_cloud->is_dense = true;
-
-    if (config.verbose) {
-        LOG(INFO) << "Temporal dynamic removal: " << removed_points << " / " << total_points 
-                  << " points removed (" << (100.0 * removed_points / total_points) << "%)";
-    }
 
     return filtered_cloud;
 }
@@ -609,6 +709,7 @@ void printUsage(const char* program_name) {
               << "Options:\n"
               << "  --input_dir <path>       Input directory containing PCD files (default: ./PCD)\n"
               << "  --output_file <path>     Output PCD file path (default: ./filtered_map.pcd)\n"
+              << "  --output_dir <path>      Output per-frame filtered PCDs to directory (prefix 'filtered_')\n"
               << "  --grid_size <float>      Voxel grid size in meters (default: 0.2)\n"
               << "  --min_neighbors <int>    Minimum neighbor grids to keep a point (default: 2)\n"
               << "  --frame_window <int>     Frame window size for temporal method (default: 1)\n"
@@ -633,6 +734,8 @@ Config parseArgs(int argc, char** argv) {
             config.input_dir = argv[++i];
         } else if (arg == "--output_file" && i + 1 < argc) {
             config.output_file = argv[++i];
+        } else if (arg == "--output_dir" && i + 1 < argc) {
+            config.output_dir = argv[++i];
         } else if (arg == "--grid_size" && i + 1 < argc) {
             config.grid_size = std::stof(argv[++i]);
         } else if (arg == "--min_neighbors" && i + 1 < argc) {
@@ -661,7 +764,11 @@ Config parseArgs(int argc, char** argv) {
 void runDynamicRemoval(const Config& config) {
     LOG(INFO) << "=== Dynamic Point Removal Configuration ===";
     LOG(INFO) << "Input directory: " << config.input_dir;
-    LOG(INFO) << "Output file: " << config.output_file;
+    if (!config.output_dir.empty()) {
+        LOG(INFO) << "Output dir (per-frame): " << config.output_dir;
+    } else {
+        LOG(INFO) << "Output file: " << config.output_file;
+    }
     LOG(INFO) << "Grid size: " << config.grid_size << " m";
     LOG(INFO) << "Min neighbor grids: " << config.min_neighbor_grids;
     LOG(INFO) << "Method: " << (config.method == RemovalMethod::TEMPORAL ? "Temporal" : "Raycast");
@@ -673,11 +780,13 @@ void runDynamicRemoval(const Config& config) {
     }
     LOG(INFO) << "Isolated removal: " << (config.enable_isolated_removal ? "enabled" : "disabled");
 
-    CloudPtr filtered_cloud(new PointCloudType());
+    bool per_frame_mode = !config.output_dir.empty();
 
     if (config.method == RemovalMethod::RAYCAST) {
         LOG(INFO) << "\n=== Loading Point Cloud Frames with Odom ===";
-        std::vector<FrameData> frames = loadPointCloudFramesWithOdom(config.input_dir, config.verbose);
+        std::vector<std::string> filenames;
+        std::vector<FrameData> frames = loadPointCloudFramesWithOdom(config.input_dir, config.verbose,
+                                                                      per_frame_mode ? &filenames : nullptr);
         
         if (frames.empty()) {
             LOG(ERROR) << "No valid point cloud frames with odom loaded. Exiting.";
@@ -685,10 +794,72 @@ void runDynamicRemoval(const Config& config) {
         }
 
         LOG(INFO) << "\n=== Filtering Dynamic Points (Raycast Method) ===";
-        filtered_cloud = filterDynamicPointsRaycast(frames, config);
+        CloudPtr filtered_cloud = filterDynamicPointsRaycast(frames, config);
+
+        if (per_frame_mode) {
+            // Per-frame mode for raycast: use the merged filtered cloud to identify which voxels were kept,
+            // then re-scan the original frames and save per-frame filtered PCDs.
+            // Build occupancy grid of kept voxels from the filtered cloud.
+            LOG(INFO) << "\n=== Per-frame output (Raycast): splitting filtered cloud back to per-frame ===";
+            OccupancyGrid kept_grid(config.grid_size);
+            kept_grid.insertCloud(filtered_cloud);
+
+            if (!fs::exists(config.output_dir)) {
+                fs::create_directories(config.output_dir);
+            }
+            int saved_count = 0;
+            for (size_t frame_idx = 0; frame_idx < frames.size(); ++frame_idx) {
+                CloudPtr pf_cloud(new PointCloudType());
+                for (const auto& point : frames[frame_idx].cloud->points) {
+                    VoxelKey key = pointToVoxelKey(point, config.grid_size);
+                    if (kept_grid.isOccupied(key)) {
+                        pf_cloud->points.push_back(point);
+                    }
+                }
+                pf_cloud->width = pf_cloud->points.size();
+                pf_cloud->height = 1;
+                pf_cloud->is_dense = true;
+
+                // Apply isolated removal per-frame if enabled
+                if (config.enable_isolated_removal) {
+                    pf_cloud = removeIsolatedPoints(pf_cloud, config);
+                }
+
+                std::string basename;
+                if (frame_idx < filenames.size()) {
+                  basename = fs::path(filenames[frame_idx]).filename().string();
+                } else {
+                  basename = "scans_" + std::to_string(frame_idx) + ".pcd";
+                }
+                std::string filtered_name = config.output_dir + "/filtered_" + basename;
+                if (pcl::io::savePCDFileBinary(filtered_name, *pf_cloud) == 0) {
+                    saved_count++;
+                }
+            }
+            LOG(INFO) << "Per-frame output: " << saved_count << " filtered PCDs saved to " << config.output_dir;
+            return;
+        }
+
+        // Original single-file output
+        LOG(INFO) << "\n=== Removing Isolated Points ===";
+        CloudPtr final_cloud = removeIsolatedPoints(filtered_cloud, config);
+        LOG(INFO) << "\n=== Saving Result ===";
+        if (final_cloud->empty()) {
+            LOG(WARNING) << "No points remaining after filtering. Output file not created.";
+            return;
+        }
+        if (pcl::io::savePCDFileBinary(config.output_file, *final_cloud) == 0) {
+            LOG(INFO) << "Successfully saved filtered point cloud to: " << config.output_file;
+            LOG(INFO) << "Final point count: " << final_cloud->size();
+        } else {
+            LOG(ERROR) << "Failed to save point cloud to: " << config.output_file;
+        }
     } else {
+        // TEMPORAL method
         LOG(INFO) << "\n=== Loading Point Cloud Frames ===";
-        std::vector<CloudPtr> frames = loadPointCloudFrames(config.input_dir, config.verbose, config.scans_prefix);
+        std::vector<std::string> filenames;
+        std::vector<CloudPtr> frames = loadPointCloudFrames(config.input_dir, config.verbose, config.scans_prefix,
+                                                            per_frame_mode ? &filenames : nullptr);
         
         if (frames.empty()) {
             LOG(ERROR) << "No valid point cloud frames loaded. Exiting.";
@@ -696,23 +867,31 @@ void runDynamicRemoval(const Config& config) {
         }
 
         LOG(INFO) << "\n=== Filtering Dynamic Points (Temporal Method) ===";
-        filtered_cloud = filterDynamicPointsTemporal(frames, config);
-    }
+        CloudPtr filtered_cloud = filterDynamicPointsTemporal(frames, config,
+                                                               per_frame_mode ? &filenames : nullptr);
 
-    LOG(INFO) << "\n=== Removing Isolated Points ===";
-    CloudPtr final_cloud = removeIsolatedPoints(filtered_cloud, config);
+        if (per_frame_mode) {
+            // Per-frame output already done inside filterDynamicPointsTemporal
+            // filtered_cloud is empty; no further action needed here
+            LOG(INFO) << "Per-frame temporal filtering complete. Isolated removal skipped (per-frame).";
+            return;
+        }
 
-    LOG(INFO) << "\n=== Saving Result ===";
-    if (final_cloud->empty()) {
-        LOG(WARNING) << "No points remaining after filtering. Output file not created.";
-        return;
-    }
+        // Original single-file output
+        LOG(INFO) << "\n=== Removing Isolated Points ===";
+        CloudPtr final_cloud = removeIsolatedPoints(filtered_cloud, config);
 
-    if (pcl::io::savePCDFileBinary(config.output_file, *final_cloud) == 0) {
-        LOG(INFO) << "Successfully saved filtered point cloud to: " << config.output_file;
-        LOG(INFO) << "Final point count: " << final_cloud->size();
-    } else {
-        LOG(ERROR) << "Failed to save point cloud to: " << config.output_file;
+        LOG(INFO) << "\n=== Saving Result ===";
+        if (final_cloud->empty()) {
+            LOG(WARNING) << "No points remaining after filtering. Output file not created.";
+            return;
+        }
+        if (pcl::io::savePCDFileBinary(config.output_file, *final_cloud) == 0) {
+            LOG(INFO) << "Successfully saved filtered point cloud to: " << config.output_file;
+            LOG(INFO) << "Final point count: " << final_cloud->size();
+        } else {
+            LOG(ERROR) << "Failed to save point cloud to: " << config.output_file;
+        }
     }
 }
 

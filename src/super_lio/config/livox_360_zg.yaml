@@ -17,6 +17,8 @@
     lio.map.ds_size: 0.25
     # 每隔多少帧自动保存一次增量点云到PCD文件夹，用于断点恢复; 0或负数表示不自动保存
     lio.map.save_interval: 500
+    # PCD文件名前缀，用于区分不同数据源保存的点云文件
+    lio.map.pcd_prefix: ""
 
     # ======================== ROS话题相关参数 ========================
     # 订阅的LiDAR点云话题名
@@ -148,3 +150,11 @@
     lio.dynamic_removal.raycast_min_hits: 2
     # 是否去除孤立体素点（无邻居的离散点）
     lio.dynamic_removal.isolated_removal: false
+
+    # ======================== SC-PGO 离线处理参数 ========================
+    # 是否启用 SC-PGO 兼容数据输出（输出 body-frame 扫描 + KITTI 位姿到 Scans/ 目录）
+    lio.sc_pgo.enable: false
+    # 关键帧平移距离阈值(米)，累计平移超过此值抽取一帧
+    lio.sc_pgo.keyframe_gap: 5.0
+    # 关键帧旋转角度阈值(度)，累计旋转超过此值抽取一帧
+    lio.sc_pgo.keyframe_deg_gap: 10.0

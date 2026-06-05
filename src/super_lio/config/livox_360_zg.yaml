@@ -16,7 +16,7 @@
     # 地图保存时体素滤波的体素大小(米)，值越小地图越精细但文件越大
     lio.map.ds_size: 0.25
     # 每隔多少帧自动保存一次增量点云到PCD文件夹，用于断点恢复; 0或负数表示不自动保存
-    lio.map.save_interval: 500
+    lio.map.save_interval: 50
     # PCD文件名前缀，用于区分不同数据源保存的点云文件
     lio.map.pcd_prefix: ""
 
@@ -39,17 +39,17 @@
     #   9 = ROBOSENSE_AIRY (速腾聚创AirY雷达)
     lio.sensor.lidar_type: 1
     # 最小有效距离(米)，小于此距离的点被剔除，用于去除近距离噪点/自车点
-    lio.sensor.blind: 0.3
+    lio.sensor.blind: 0.1
     # 最大有效距离(米)，大于此距离的点被剔除，用于去除远距离噪声点
     lio.sensor.maxrange: 100.0
     # 点云采样间隔，每隔N个点取1个。1=不降采样; 3=每3个点取1个，减少计算量
-    lio.sensor.filter_rate: 1
+    lio.sensor.filter_rate: 2
     # 是否对去畸变后的点云进行体素滤波降采样
     lio.sensor.enable_downsample: true
     # 点云体素滤波的体素大小(米)，值越大点云越稀疏，计算越快
     lio.sensor.voxel_fliter_size: 0.25
     # 是否启用强度滤波，剔除低强度点
-    lio.sensor.intensity_filter_en: true
+    lio.sensor.intensity_filter_en: false
     # 强度滤波阈值，低于此值的点被剔除（仅intensity_filter_en为true时生效）
     lio.sensor.intensity_min: 10.0
     # 当地重力加速度大小(m/s²)，用于IMU初始化和重力对齐，影响定位精度

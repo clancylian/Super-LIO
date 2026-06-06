@@ -55,6 +55,18 @@ void LoadParamFromRos(rclcpp::Node& node)
   node.declare_parameter<std::string>("lio.ros.imu_topic", "/imu");
   node.get_parameter("lio.ros.imu_topic", g_imu_topic);
 
+  node.declare_parameter<bool>("lio.ros.imu_qos_reliable", false);
+  node.get_parameter("lio.ros.imu_qos_reliable", g_imu_qos_reliable);
+
+  node.declare_parameter<bool>("lio.ros.lidar_qos_reliable", false);
+  node.get_parameter("lio.ros.lidar_qos_reliable", g_lidar_qos_reliable);
+
+  LOG(INFO) << GREEN << " ---> [Param] ros/imu_qos_reliable: "
+            << (g_imu_qos_reliable ? "true" : "false") << RESET;
+
+  LOG(INFO) << GREEN << " ---> [Param] ros/lidar_qos_reliable: "
+            << (g_lidar_qos_reliable ? "true" : "false") << RESET;
+
   node.declare_parameter<std::string>("lio.ros.map_save_service_topic", "/map_save");
   node.get_parameter("lio.ros.map_save_service_topic", g_map_save_service_topic);
 
@@ -446,12 +458,20 @@ void ROSWrapper::setupIO(){
   sub_opt.callback_group = cb_sensor_;
 
   auto imu_qos = rclcpp::QoS(rclcpp::KeepLast(500))
-                 .best_effort()
                  .durability_volatile();
+  if (g_imu_qos_reliable) {
+    imu_qos.reliable();
+  } else {
+    imu_qos.best_effort();
+  }
 
   auto lidar_qos = rclcpp::QoS(rclcpp::KeepLast(20))
-                   .best_effort()
                    .durability_volatile();
+  if (g_lidar_qos_reliable) {
+    lidar_qos.reliable();
+  } else {
+    lidar_qos.best_effort();
+  }
 
   sub_imu_ = this->create_subscription<sensor_msgs::msg::Imu>(
       g_imu_topic,

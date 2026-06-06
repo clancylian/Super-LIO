@@ -41,6 +41,10 @@ namespace LI2Sup{
   
   extern std::string g_imu_topic;
   extern std::string g_lidar_topic;
+  
+  /// QoS settings
+  extern bool g_imu_qos_reliable;
+  extern bool g_lidar_qos_reliable;
 
   extern int   g_lidar_type;       // 1: mid360, 2: hesai16, 3: velo16, 4: velo32, 5: vel_nclt, 6: ls16 
   extern float g_blind2;

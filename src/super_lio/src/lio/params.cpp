@@ -24,6 +24,10 @@ namespace LI2Sup{
   
   string g_imu_topic;
   string g_lidar_topic;
+  
+  /// QoS settings
+  bool g_imu_qos_reliable = true;
+  bool g_lidar_qos_reliable = true;
 
   int    g_lidar_type;
   float  g_blind2;

@@ -187,7 +187,7 @@ def generate_launch_description():
         remappings=[('/tf_static', '/tf_static')],
         output='screen'
     )
-    ld.add_action(static_transform_world_to_imu)
+    # ld.add_action(static_transform_world_to_imu)
 
     static_transform_imu_to_livox_frame = Node(
         package='tf2_ros',

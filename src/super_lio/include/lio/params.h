@@ -50,6 +50,7 @@ namespace LI2Sup{
   extern float g_blind2;
   extern float g_maxrange2;
   extern int   g_filter_rate;
+  extern int   g_filter_offset; // 余数偏移，用于下次采样的起始点
   extern bool  g_enable_downsample;
   extern float g_voxel_fliter_size;
   extern bool  g_intensity_filter_en;

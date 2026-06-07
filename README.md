@@ -62,6 +62,28 @@ Super-LIO 支持多种主流激光雷达，包括：
 
 > **RoboSense Airy 说明**：Airy 雷达使用 RBD（右-后-下）坐标系，与 ROS 标准的 FLU（前-左-上）坐标系不同。系统在数据接收阶段自动将点云和 IMU 数据从 RBD 转换为 FLU，确保输出结果符合 ROS 坐标系标准，外参矩阵只需配置物理安装关系即可。
 
+> **去除 Livox SDK 依赖**：本仓库已移除对 Livox ROS2 Driver 的依赖，Livox 雷达数据通过标准 ROS 2 接口接收，简化了部署流程。
+
+### 多实例并行支持
+
+系统支持同时运行多个 Super-LIO 实例处理**不同雷达的数据**，各实例独立运算互不干扰。通过在配置中设置不同的 PCD 文件名前缀，各实例保存的地图文件不会互相覆盖：
+
+```yaml
+lio.map.pcd_prefix: "front_"  # PCD 文件名前缀，用于区分不同雷达的保存结果
+```
+
+该功能适用于搭载多台雷达的机器人平台，每台雷达由独立的 Super-LIO 实例处理。
+
+### 仅去畸变模式（LIO Only Undistort）
+
+在某些场景下（如配合轮式里程计或其他定位源），可能只需要点云去畸变而不需要完整的 LIO 状态估计。此模式下系统跳过帧间匹配和状态更新，仅完成 IMU 传播和点云去畸变处理。
+
+配置参数：
+```yaml
+lio.sensor.lio_only_undistort: true
+lio.sensor.lio_only_undistort_frame: "base_link"  # 去畸变点云发布的参考坐标系
+```
+
 ### 动态点滤除
 
 系统支持在建图保存时滤除动态物体（行人、车辆等），提供两种方法：
@@ -104,6 +126,80 @@ lio.dynamic_removal.isolated_removal: true
 
 LIO 计算线程绑定高优先级 CPU 核心，确保关键路径的实时性能。
 
+### 仅降采样模式（Downsample Only）
+
+系统支持跳过全部 LIO 计算，仅对原始点云进行降采样后发布。适用于只需要轻量点云预处理（如降采样、转发）的场景，计算开销极低。
+
+配置参数：
+```yaml
+lio.sensor.downsample_only: true  # 启用仅降采样模式（优先级最高）
+```
+
+### SC-PGO 离线处理支持
+
+系统支持输出关键帧用于 **SC-PGO（Scan Context-based Pose Graph Optimization）** 离线后端优化。启用后，系统会在运行时定期保存关键帧位姿和 Scan Context 描述子，提供给 SC-PGO 进行全局位姿图优化，消除累积漂移。
+
+```yaml
+lio.sc_pgo.enable: true               # 启用 SC-PGO 关键帧输出
+lio.sc_pgo.keyframe_gap: 5.0          # 关键帧距离间隔（米）
+lio.sc_pgo.keyframe_deg_gap: 10.0     # 关键帧角度间隔（度）
+```
+
+### QoS 可靠性可配置
+
+IMU 和 LiDAR 话题的 QoS 可靠性策略可通过参数配置，适应不同的网络和传感器环境：
+
+```yaml
+lio.ros.imu_qos_reliable: false    # IMU 话题：true=Reliable, false=Best Effort
+lio.ros.lidar_qos_reliable: false  # LiDAR 话题：true=Reliable, false=Best Effort
+```
+
+- **Reliable**：保证数据完整性，适用于录制的 bag 数据或关键链路
+- **Best Effort**：低延迟，适用于高频传感器数据的实时传输
+
+### Gazebo 仿真支持
+
+系统提供完整的 Gazebo 仿真环境支持，可在仿真中验证算法性能。使用独立的配置文件 `gazebo_mid360.yaml` 和启动脚本：
+
+```bash
+ros2 launch super_lio gazebo_mid360.py
+```
+
+仿真参数（如噪声模型、时间戳同步等）在配置文件中集中管理，便于从仿真平滑迁移到实车部署。
+
+### 机器人专用配置
+
+系统提供针对不同机器人平台的专用启动配置：
+
+| 平台 | 启动脚本 | 配置文件 | 说明 |
+|------|---------|---------|------|
+| 四足机器人 | `Livox_mid360.py` | `livox_360.yaml` | 默认四足机器人配置 |
+| 无人机 | `Livox_mid360_drone.py` | `livox_360_drone.yaml` | 无人机专用配置 |
+| Gazebo 仿真 | `gazebo_mid360.py` | `gazebo_mid360.yaml` | 仿真环境配置 |
+
+各配置针对对应平台的传感器安装方式、运动特性进行了优化。
+
+### 可视化与坐标系增强
+
+- **机体坐标系可视化**：支持按机体坐标系（Body frame）发布可视化点云，便于在机器人局部坐标系中观察
+- **base_footprint TF 发布**：自动发布 `base_footprint` 到 `odom` 的 TF 变换，兼容 Navigation2 等导航栈，该frame与地面保持平行
+- **坐标系名称可配置**：`world` 帧、`imu` 帧名称可通过参数自定义，适应不同机器人平台的 TF 树约定
+
+### 计算性能优化
+
+- **独立点云发布线程**：点云发布在独立线程中执行，不阻塞 LIO 主线程的实时计算
+- **取点算法优化**：优化了点云采样策略，步长取点时每帧循环偏移起始位置，避免固定间隔采样导致的时域锯齿伪影
+
+### 地图保存服务
+
+地图保存通过命名服务调用，服务话题名可配置，支持在多机器人场景中区分不同机器人的地图保存请求：
+
+```yaml
+lio.map.save_service_topic: "/map_save"  # 地图保存服务话题名
+```
+
+保存地图时支持暂停 LIO 计算，确保保存的地图数据一致性。
+
 
 ## 快速开始
 
@@ -123,7 +219,7 @@ sudo apt install libgoogle-glog-dev libtbb-dev
 
 ### 编译与运行
 ```bash
-git clone https://github.com/Liansheng-Wang/Super-LIO.git
+git clone https://github.com/ypat999/Super-LIO.git
 cd Super-LIO
 colcon build
 
@@ -147,6 +243,18 @@ ros2 launch super_lio Robosense_airy.py
 ```
 
 Airy 雷达的默认话题为 `/front_lidar`（点云）和 `/front_lidar/imu`（IMU），如需修改请在 `config/robosense_airy.yaml` 中调整。
+
+#### 🛸 无人机配置
+
+```bash
+ros2 launch super_lio Livox_mid360_drone.py
+```
+
+#### 💻 Gazebo 仿真
+
+```bash
+ros2 launch super_lio gazebo_mid360.py
+```
 
 
 ## 数据集
@@ -201,5 +309,19 @@ Super-LIO 在涵盖室内、室外和大规模场景的多个真实数据集上�
 
 - 2026-06-07
  - [Important revisions]: Fixed some known errors and improved algorithm accuracy!
+
+- 2026-06-08 (ypat999 fork)
+  - Remove Livox SDK dependency, support standard ROS 2 sensor interface
+  - Add multi-instance parallel support with configurable PCD prefix
+  - Add LIO Only Undistort mode (skip matching, only undistortion)
+  - Add Downsample Only mode (skip all LIO, only downsample)
+  - Add SC-PGO offline backend optimization keyframe output
+  - Add configurable QoS reliability for IMU/LiDAR topics
+  - Add configurable map save service topic, pause LIO during map saving
+  - Add body-frame visualization, base_footprint TF, configurable frame names
+  - Add point cloud intensity filtering
+  - Optimize point extraction algorithm and sampling strategy
+  - Separate point cloud publishing to independent thread
+  - Multiple computation performance optimizations and stability improvements
  
 </details>

@@ -999,14 +999,14 @@ void SuperLIO::DownSampleOnly(){
   std::size_t ptsize = raw_pc->size();
   
   // Apply filter_rate and intensity_filter
-  for(std::size_t i = g_filter_offset; i < ptsize; i += g_filter_rate){
+  for(std::size_t i = 0; i < ptsize; i += g_filter_rate){
     const auto& pt = raw_pc->points[i];
-
+    
     // Apply intensity filter if enabled
     if(g_intensity_filter_en && pt.intensity < g_intensity_min){
       continue;
     }
-
+    
     // Apply range filter
     double dis = pt.x * pt.x + pt.y * pt.y + pt.z * pt.z;
     if(dis > g_blind2 && dis < g_maxrange2){
@@ -1017,10 +1017,6 @@ void SuperLIO::DownSampleOnly(){
       pt_out.intensity = pt.intensity;
       scan_undistort_full_->push_back(pt_out);
     }
-  }
-  // 更新偏移量
-  if(g_filter_rate > 0) {
-    g_filter_offset = (g_filter_offset + 1) % g_filter_rate;
   }
   
   // Apply voxel grid filter if enabled

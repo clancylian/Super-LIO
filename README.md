@@ -178,3 +178,28 @@ Super-LIO 在涵盖室内、室外和大规模场景的多个真实数据集上�
   doi     = {10.1109/LRA.2026.3653372}
 }
 ```
+
+
+## Update Logs
+
+<details>
+<summary>Click to expand <b>Update Logs</b> (click to collapse)</summary>
+
+<br>
+
+- 2026-01-04  
+  - Separate ROS interface and algorithm.
+  - Refactor SuperLIOReLoc to inherit from SuperLIO.
+  - Code style aligned with ROS2 version.
+
+- 2026-01-04
+  - The main branch is renamed to ros1
+  - add ros2 branch
+
+- 2026-01-04 21:51
+  - release ROS2 version
+
+- 2026-06-07
+ - [Important revisions]: Fixed some known errors and improved algorithm accuracy!
+ 
+</details>

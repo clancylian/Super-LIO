@@ -1007,8 +1007,10 @@ void SuperLIO::DownSample(){
 
 
 void SuperLIO::DownSampleOnly(){
-  // Directly process raw point cloud without IMU propagation
-  // Apply filter_rate, intensity_filter, and voxel_filter
+  // Directly process raw point cloud without IMU propagation.
+  // NOTE: filter_rate/intensity_filter are already applied by ROSWrapper
+  // at the point cloud input stage, so measures_.lidar.pc is pre-filtered.
+  // Here we only apply range filter and voxel grid filter.
   
   scan_undistort_full_->clear();
   ds_undistort_->clear();
@@ -1025,16 +1027,7 @@ void SuperLIO::DownSampleOnly(){
       auto& local_pts = tls_points.local();
       local_pts.reserve(256);
       for (size_t i = r.begin(); i < r.end(); ++i) {
-        // Apply filter_rate subsampling: only process points matching offset
-        if (g_filter_rate > 1 && ((i - g_filter_offset) % g_filter_rate) != 0) {
-          continue;
-        }
         const auto& pt = raw_pc->points[i];
-
-        // Apply intensity filter if enabled
-        if (g_intensity_filter_en && pt.intensity < g_intensity_min) {
-          continue;
-        }
 
         // Apply range filter
         double dis = pt.x * pt.x + pt.y * pt.y + pt.z * pt.z;
@@ -1055,11 +1048,6 @@ void SuperLIO::DownSampleOnly(){
     for (auto& p : local_pts) {
       scan_undistort_full_->push_back(p);
     }
-  }
-
-  // 更新偏移量
-  if(g_filter_rate > 0) {
-    g_filter_offset = (g_filter_offset + 1) % g_filter_rate;
   }
   
   // Apply voxel grid filter if enabled

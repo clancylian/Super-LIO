@@ -163,6 +163,24 @@
     # 是否启用单核运行模式。true: 关闭TBB并行，LIO主管线串行执行（Output/Save独立线程不受影响）; false: 正常并行
     lio.single_core: false
 
+    # ======================== 快速Odom模式 ========================
+    # 是否发布IMU预测位姿（低延迟，不经过ESKF更新）; false: 只发布校正后的位姿
+    lio.fast_odom: false
+
+    # ======================== 退化检测与正则化 ========================
+    # 是否启用观测Hessian退化检测，在病态方向上添加Tikhonov正则化
+    lio.degeneracy.detect_en: true
+    # 退化判定阈值：最小特征值低于此值时认为退化（在走廊方向等缺乏约束时生效）
+    lio.degeneracy.threshold: 100.0
+    # Tikhonov正则化强度（对角加常数，值越大退化方向越依赖IMU预测）
+    lio.degeneracy.tikhonov_lambda: 1.0
+
+    # ======================== 自适应观测权重 ========================
+    # 是否启用距离相关的观测权重（替代硬编码×1000）
+    lio.adaptive_weight.en: true
+    # 自适应权重衰减距离Sigma(米)，越大则远端点权重衰减越慢
+    lio.adaptive_weight.sigma: 30.0
+
         # IMU订阅的QoS可靠性设置。true: reliable(可靠传输); false: best_effort(尽力传输)
     # reliable: 保证数据完整性,适合关键数据; best_effort: 低延迟,适合高频传感器数据
     lio.ros.imu_qos_reliable: false

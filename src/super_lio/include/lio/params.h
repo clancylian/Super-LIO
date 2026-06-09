@@ -137,8 +137,21 @@ namespace LI2Sup{
   extern float g_sc_pgo_keyframe_deg_gap;
 
   /// Single-core mode: disables all TBB parallelism in LIO pipeline,
-  /// independent threads (OutputThread, SaveThread) remain unaffected.
-  extern bool g_single_core;
+   /// independent threads (OutputThread, SaveThread) remain unaffected.
+   extern bool g_single_core;
+
+   /// Fast odom: publish IMU-predicted pose immediately after undistortion
+   /// for minimal latency; full corrected odom still published by Output().
+   extern bool g_fast_odom;
+
+   /// Degeneracy detection + Tikhonov regularization on observation Hessian
+   extern bool   g_degeneracy_detect_en;
+   extern double g_degeneracy_threshold;
+   extern double g_tikhonov_lambda;
+
+   /// Adaptive observation weight: replace flat ×1000 with distance-dependent weight
+   extern bool   g_adaptive_weight_en;
+   extern double g_adaptive_weight_sigma;
 
 }
 

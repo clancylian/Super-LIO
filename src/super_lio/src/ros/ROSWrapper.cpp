@@ -334,6 +334,42 @@ void LoadParamFromRos(rclcpp::Node& node)
   LOG(INFO) << GREEN << " ---> [Param] single_core: "
             << (g_single_core ? "true" : "false") << RESET;
 
+  // ================= fast odom =================
+  node.declare_parameter<bool>("lio.fast_odom", false);
+  node.get_parameter("lio.fast_odom", g_fast_odom);
+
+  LOG(INFO) << GREEN << " ---> [Param] fast_odom: "
+            << (g_fast_odom ? "true" : "false") << RESET;
+
+  // ================= degeneracy detection =================
+  node.declare_parameter<bool>("lio.degeneracy.detect_en", true);
+  node.get_parameter("lio.degeneracy.detect_en", g_degeneracy_detect_en);
+
+  node.declare_parameter<double>("lio.degeneracy.threshold", 100.0);
+  node.get_parameter("lio.degeneracy.threshold", g_degeneracy_threshold);
+
+  node.declare_parameter<double>("lio.degeneracy.tikhonov_lambda", 1.0);
+  node.get_parameter("lio.degeneracy.tikhonov_lambda", g_tikhonov_lambda);
+
+  LOG(INFO) << GREEN << " ---> [Param] degeneracy/detect_en: "
+            << (g_degeneracy_detect_en ? "true" : "false") << RESET;
+  LOG(INFO) << GREEN << " ---> [Param] degeneracy/threshold: "
+            << g_degeneracy_threshold << RESET;
+  LOG(INFO) << GREEN << " ---> [Param] degeneracy/tikhonov_lambda: "
+            << g_tikhonov_lambda << RESET;
+
+  // ================= adaptive weight =================
+  node.declare_parameter<bool>("lio.adaptive_weight.en", true);
+  node.get_parameter("lio.adaptive_weight.en", g_adaptive_weight_en);
+
+  node.declare_parameter<double>("lio.adaptive_weight.sigma", 30.0);
+  node.get_parameter("lio.adaptive_weight.sigma", g_adaptive_weight_sigma);
+
+  LOG(INFO) << GREEN << " ---> [Param] adaptive_weight/en: "
+            << (g_adaptive_weight_en ? "true" : "false") << RESET;
+  LOG(INFO) << GREEN << " ---> [Param] adaptive_weight/sigma: "
+            << g_adaptive_weight_sigma << RESET;
+
   // ================= lio only undistort mode =================
   node.declare_parameter<bool>("lio.lio_only_undistort", false);
   node.get_parameter("lio.lio_only_undistort", g_lio_only_undistort);

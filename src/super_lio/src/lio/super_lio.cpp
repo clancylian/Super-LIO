@@ -392,11 +392,15 @@ void SuperLIO::stateProcess(){
   if(g_lio_only_undistort){
     if(g_time_eva){
       time_record_.Evaluate([this](){Propagation_Undistort();}, "[Undistort]");
+    }else{
+      Propagation_Undistort();
+    }
+    if(g_fast_odom) data_wrapper_->pub_odom(kf_->GetNavState());
+    if(g_time_eva){
       time_record_.Evaluate([this]() { DownSample(); }, "[DownSample]");
       time_record_.Evaluate([this]() { Observe(); }, "[Observe]");
       time_record_.Evaluate([this]() { UpdateMap(); }, "[UpdateMap]");
     }else{
-      Propagation_Undistort();
       DownSample();
       Observe();
       UpdateMap();
@@ -408,11 +412,15 @@ void SuperLIO::stateProcess(){
   }
   if(g_time_eva){
     time_record_.Evaluate([this](){Propagation_Undistort();}, "[Undistort]");
+  }else{
+    Propagation_Undistort();
+  }
+  if(g_fast_odom) data_wrapper_->pub_odom(kf_->GetNavState());
+  if(g_time_eva){
     time_record_.Evaluate([this]() { DownSample(); }, "[DownSample]");
     time_record_.Evaluate([this]() { Observe(); }, "[Observe]");
     time_record_.Evaluate([this]() { UpdateMap(); }, "[UpdateMap]");
   }else{
-    Propagation_Undistort();
     DownSample();
     Observe();
     UpdateMap();
@@ -1138,9 +1146,14 @@ void SuperLIO::Observe(){
             V6d J;
             J.head<3>() = point_body_d.cross(nb);
             J.tail<3>() = normvec;
+
+            double dist = _lengths[idx];
+            double weight = g_adaptive_weight_en
+                ? (1000.0 / (1.0 + (dist * dist) / (g_adaptive_weight_sigma * g_adaptive_weight_sigma)))
+                : 1000.0;
       
-            local_acc.HTVH += J * 1000 * J.transpose();
-            local_acc.HTVr -= J * 1000 * error;
+            local_acc.HTVH += J * weight * J.transpose();
+            local_acc.HTVr -= J * weight * error;
           }
         }
     });
@@ -1151,6 +1164,17 @@ void SuperLIO::Observe(){
       sum_HTVH += local_acc.HTVH;
       sum_HTVr += local_acc.HTVr;
     }
+
+    // Degeneracy detection: if minimum eigenvalue of observation Hessian is
+    // below threshold, the system lacks observability in that direction
+    // (e.g. corridor axis). Add Tikhonov regularization to prevent divergence.
+    if(g_degeneracy_detect_en){
+      Eigen::SelfAdjointEigenSolver<M6d> eig(sum_HTVH);
+      if(eig.eigenvalues()(0) < g_degeneracy_threshold){
+        sum_HTVH += g_tikhonov_lambda * M6d::Identity();
+      }
+    }
+
     HTVH = sum_HTVH.cast<scalar>();
     HTVr = sum_HTVr.cast<scalar>();
 

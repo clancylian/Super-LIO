@@ -100,3 +100,16 @@
     # ======================== 单核模式 ========================
     # 是否启用单核运行模式。true: 关闭TBB并行，LIO主管线串行执行
     lio.single_core: false
+
+    # ======================== 快速Odom模式 ========================
+    # 是否发布IMU预测位姿（低延迟，不经过ESKF更新）
+    lio.fast_odom: false
+
+    # ======================== 退化检测与正则化 ========================
+    lio.degeneracy.detect_en: true
+    lio.degeneracy.threshold: 100.0
+    lio.degeneracy.tikhonov_lambda: 1.0
+
+    # ======================== 自适应观测权重 ========================
+    lio.adaptive_weight.en: true
+    lio.adaptive_weight.sigma: 30.0

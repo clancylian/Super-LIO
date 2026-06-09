@@ -113,4 +113,16 @@ namespace LI2Sup{
   /// Single-core mode
   bool g_single_core = false;
 
+  /// Fast odom
+  bool g_fast_odom = false;
+
+  /// Degeneracy detection + Tikhonov
+  bool   g_degeneracy_detect_en = true;
+  double g_degeneracy_threshold = 100.0;
+  double g_tikhonov_lambda = 1.0;
+
+  /// Adaptive weight
+  bool   g_adaptive_weight_en = true;
+  double g_adaptive_weight_sigma = 30.0;
+
 }

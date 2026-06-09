@@ -13,6 +13,7 @@
 #include <fstream>
 #include <iomanip>
 #include <sstream>
+#include <algorithm>
 
 
 using namespace BASIC;
@@ -969,15 +970,18 @@ void SuperLIO::Propagation_Undistort(){
         pt_full.z = pt.z;
         continue;
       }
-      auto match_iter = propagate_states_.begin();
-      for (auto iter = propagate_states_.begin(); iter != propagate_states_.end(); ++iter) {
-        auto next_iter = std::next(iter);
-        if (iter->time < query_time && next_iter->time >= query_time) {
-          match_iter = iter;
-          break;
-        }
+
+      // Binary search on time-ordered IMU states: O(log N) vs O(N) linear scan
+      auto it = std::lower_bound(
+          propagate_states_.cbegin(), propagate_states_.cend(), query_time,
+          [](const DynamicState& s, double t) { return s.time < t; });
+      decltype(it) match_iter, match_iter_n;
+      if (it == propagate_states_.cbegin()) {
+        match_iter = match_iter_n = it;
+      } else {
+        match_iter = std::prev(it);
+        match_iter_n = it;
       }
-      auto match_iter_n = std::next(match_iter);
       double dt = match_iter_n->time - match_iter->time;
       double tau = query_time - match_iter->time;
       double s   = tau / dt;

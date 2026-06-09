@@ -136,6 +136,10 @@ namespace LI2Sup{
   extern float g_sc_pgo_keyframe_gap;
   extern float g_sc_pgo_keyframe_deg_gap;
 
+  /// Single-core mode: disables all TBB parallelism in LIO pipeline,
+  /// independent threads (OutputThread, SaveThread) remain unaffected.
+  extern bool g_single_core;
+
 }
 
 #endif

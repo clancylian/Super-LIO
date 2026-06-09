@@ -6,6 +6,7 @@
 #include <tbb/blocked_range.h>
 #include <tbb/concurrent_vector.h>
 #include <tbb/enumerable_thread_specific.h>
+#include <tbb/info.h>
 #include <sched.h>
 #include <pthread.h>
 #include <cstring>
@@ -189,6 +190,17 @@ void SuperLIO::init(){
       LOG(INFO) << GREEN << " ---> [SC-PGO] Output enabled, saving to " 
                 << scans_dir << RESET;
     }
+  }
+
+  // Single-core mode: limit TBB to 1 thread so all parallel_for run serially
+  if (g_single_core) {
+    tbb_control_.reset(new tbb::global_control(
+        tbb::global_control::max_allowed_parallelism, 1));
+    LOG(INFO) << YELLOW << " ---> [SuperLIO]: Single-core mode, TBB parallelism disabled" << RESET;
+  } else {
+    unsigned n = tbb::info::default_concurrency();
+    tbb_control_.reset(new tbb::global_control(
+        tbb::global_control::max_allowed_parallelism, n));
   }
 
   LOG(INFO) << GREEN << " ---> [SuperLIO]: initialized." << RESET;
@@ -858,6 +870,10 @@ void SuperLIO::saveMap(){
         cmd << " --disable_isolated";
       }
       
+      if(g_single_core) {
+        cmd << " --single_core";
+      }
+      
       LOG(INFO) << YELLOW << " ---> Executing: " << cmd.str() << RESET;
       int ret = system(cmd.str().c_str());
       if(ret == 0) {
@@ -999,27 +1015,48 @@ void SuperLIO::DownSampleOnly(){
   
   auto& raw_pc = measures_.lidar.pc;
   std::size_t ptsize = raw_pc->size();
-  
-  // Apply filter_rate and intensity_filter
-  for(std::size_t i = g_filter_offset; i < ptsize; i += g_filter_rate){
-    const auto& pt = raw_pc->points[i];
 
-    // Apply intensity filter if enabled
-    if(g_intensity_filter_en && pt.intensity < g_intensity_min){
-      continue;
+  // Thread-local collectors for parallel filtering
+  tbb::enumerable_thread_specific<std::vector<pcl::PointXYZI>> tls_points;
+
+  tbb::parallel_for(
+    tbb::blocked_range<size_t>(0, ptsize),
+    [&](const tbb::blocked_range<size_t>& r) {
+      auto& local_pts = tls_points.local();
+      local_pts.reserve(256);
+      for (size_t i = r.begin(); i < r.end(); ++i) {
+        // Apply filter_rate subsampling: only process points matching offset
+        if (g_filter_rate > 1 && ((i - g_filter_offset) % g_filter_rate) != 0) {
+          continue;
+        }
+        const auto& pt = raw_pc->points[i];
+
+        // Apply intensity filter if enabled
+        if (g_intensity_filter_en && pt.intensity < g_intensity_min) {
+          continue;
+        }
+
+        // Apply range filter
+        double dis = pt.x * pt.x + pt.y * pt.y + pt.z * pt.z;
+        if (dis > g_blind2 && dis < g_maxrange2) {
+          pcl::PointXYZI pt_out;
+          pt_out.x = pt.x;
+          pt_out.y = pt.y;
+          pt_out.z = pt.z;
+          pt_out.intensity = pt.intensity;
+          local_pts.push_back(pt_out);
+        }
+      }
     }
+  );
 
-    // Apply range filter
-    double dis = pt.x * pt.x + pt.y * pt.y + pt.z * pt.z;
-    if(dis > g_blind2 && dis < g_maxrange2){
-      pcl::PointXYZI pt_out;
-      pt_out.x = pt.x;
-      pt_out.y = pt.y;
-      pt_out.z = pt.z;
-      pt_out.intensity = pt.intensity;
-      scan_undistort_full_->push_back(pt_out);
+  // Merge thread-local results
+  for (auto& local_pts : tls_points) {
+    for (auto& p : local_pts) {
+      scan_undistort_full_->push_back(p);
     }
   }
+
   // 更新偏移量
   if(g_filter_rate > 0) {
     g_filter_offset = (g_filter_offset + 1) % g_filter_rate;
@@ -1052,11 +1089,16 @@ void SuperLIO::Observe(){
   effect_knn_num_ = ptsize;
   std::iota(effect_knn_idxs_.begin(), effect_knn_idxs_.begin() + ptsize, 0);
 
-  for(size_t i = 0; i < ptsize; ++i){
-    const auto& point_body_pcl = ds_undistort_->points[i];
-    points_body_v3_[i] = V3(point_body_pcl.x, point_body_pcl.y, point_body_pcl.z);
-    _lengths[i] = points_body_v3_[i].norm();
-  }
+  tbb::parallel_for(
+    tbb::blocked_range<size_t>(0, ptsize),
+    [&](const tbb::blocked_range<size_t>& r) {
+      for (size_t i = r.begin(); i < r.end(); ++i) {
+        const auto& point_body_pcl = ds_undistort_->points[i];
+        points_body_v3_[i] = V3(point_body_pcl.x, point_body_pcl.y, point_body_pcl.z);
+        _lengths[i] = points_body_v3_[i].norm();
+      }
+    }
+  );
 
   ivox_->reset_max_group();
   int iter_num = 0;
@@ -1150,10 +1192,15 @@ void SuperLIO::UpdateMap() {
   const auto R = last_pose_.R_;
   const auto t = last_pose_.t_;
   
-  for (size_t i = 0; i < ptsize; ++i) {
-    const auto& pt = points_body_v3_[i];
-    points_world_v3_[i] = R * pt + t;
-  }
+  tbb::parallel_for(
+    tbb::blocked_range<size_t>(0, ptsize),
+    [&](const tbb::blocked_range<size_t>& r) {
+      for (size_t i = r.begin(); i < r.end(); ++i) {
+        const auto& pt = points_body_v3_[i];
+        points_world_v3_[i] = R * pt + t;
+      }
+    }
+  );
   
   ivox_->insert(points_world_v3_);
 

@@ -110,4 +110,7 @@ namespace LI2Sup{
   float g_sc_pgo_keyframe_gap = 5.0f;
   float g_sc_pgo_keyframe_deg_gap = 10.0f;
 
+  /// Single-core mode
+  bool g_single_core = false;
+
 }

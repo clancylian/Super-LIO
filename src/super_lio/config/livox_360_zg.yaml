@@ -159,6 +159,10 @@
     # 关键帧旋转角度阈值(度)，累计旋转超过此值抽取一帧
     lio.sc_pgo.keyframe_deg_gap: 10.0
 
+    # ======================== 单核模式 ========================
+    # 是否启用单核运行模式。true: 关闭TBB并行，LIO主管线串行执行（Output/Save独立线程不受影响）; false: 正常并行
+    lio.single_core: false
+
         # IMU订阅的QoS可靠性设置。true: reliable(可靠传输); false: best_effort(尽力传输)
     # reliable: 保证数据完整性,适合关键数据; best_effort: 低延迟,适合高频传感器数据
     lio.ros.imu_qos_reliable: false

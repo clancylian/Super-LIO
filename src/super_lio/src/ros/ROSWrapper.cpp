@@ -327,6 +327,13 @@ void LoadParamFromRos(rclcpp::Node& node)
   LOG(INFO) << GREEN << " ---> [Param] sc_pgo/keyframe_deg_gap: "
             << g_sc_pgo_keyframe_deg_gap << RESET;
 
+  // ================= single core mode =================
+  node.declare_parameter<bool>("lio.single_core", false);
+  node.get_parameter("lio.single_core", g_single_core);
+
+  LOG(INFO) << GREEN << " ---> [Param] single_core: "
+            << (g_single_core ? "true" : "false") << RESET;
+
   // ================= lio only undistort mode =================
   node.declare_parameter<bool>("lio.lio_only_undistort", false);
   node.get_parameter("lio.lio_only_undistort", g_lio_only_undistort);

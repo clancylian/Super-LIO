@@ -23,7 +23,12 @@
 #include <fstream>
 #include <sstream>
 #include <mutex>
-#include <omp.h>
+#include <memory>
+#include <tbb/parallel_for.h>
+#include <tbb/blocked_range.h>
+#include <tbb/enumerable_thread_specific.h>
+#include <tbb/global_control.h>
+#include <tbb/info.h>
 
 #include <Eigen/Core>
 #include <Eigen/Geometry>
@@ -54,6 +59,7 @@ struct Config {
     RemovalMethod method = RemovalMethod::TEMPORAL;
     int raycast_min_hits = 2;
     std::string scans_prefix = "";
+    bool single_core = false;
 };
 
 using PointType = pcl::PointXYZI;
@@ -274,14 +280,19 @@ CloudPtr filterDynamicPointsTemporal(
     size_t n_frames = frames.size();
     std::vector<OccupancyGrid> grids(n_frames, OccupancyGrid(config.grid_size));
 
-#pragma omp parallel for schedule(dynamic)
-    for (size_t i = 0; i < n_frames; ++i) {
-        grids[i].insertCloud(frames[i]);
-        if (config.verbose && i % 10 == 0) {
-#pragma omp critical
-            LOG(INFO) << "Frame " << i << ": " << grids[i].size() << " occupied voxels";
+    tbb::parallel_for(
+        tbb::blocked_range<size_t>(0, n_frames),
+        [&](const tbb::blocked_range<size_t>& r) {
+            for (size_t i = r.begin(); i < r.end(); ++i) {
+                grids[i].insertCloud(frames[i]);
+                if (config.verbose && i % 10 == 0) {
+                    static std::mutex log_mtx;
+                    std::lock_guard<std::mutex> lock(log_mtx);
+                    LOG(INFO) << "Frame " << i << ": " << grids[i].size() << " occupied voxels";
+                }
+            }
         }
-    }
+    );
 
     // Per-frame filtered clouds (used when output_dir is set)
     std::vector<CloudPtr> per_frame_filtered;
@@ -299,91 +310,107 @@ CloudPtr filterDynamicPointsTemporal(
 
     if (config.output_dir.empty()) {
         // Original behavior: collect all filtered points into one vector
-#pragma omp parallel reduction(+:total_points, removed_points)
-    {
-        std::vector<PointType, Eigen::aligned_allocator<PointType>> local_filtered_points;
+        tbb::enumerable_thread_specific<int> tls_total(0), tls_removed(0);
+        tbb::enumerable_thread_specific<std::vector<PointType, Eigen::aligned_allocator<PointType>>> tls_filtered;
 
-#pragma omp for schedule(dynamic)
-        for (size_t frame_idx = 0; frame_idx < n_frames; ++frame_idx) {
-            const CloudPtr& frame = frames[frame_idx];
-            int frame_removed = 0;
+        tbb::parallel_for(
+            tbb::blocked_range<size_t>(0, n_frames),
+            [&](const tbb::blocked_range<size_t>& r) {
+                auto& local_total = tls_total.local();
+                auto& local_removed = tls_removed.local();
+                auto& local_filtered = tls_filtered.local();
+                local_filtered.reserve(8192);
+                for (size_t frame_idx = r.begin(); frame_idx < r.end(); ++frame_idx) {
+                    const CloudPtr& frame = frames[frame_idx];
+                    int frame_removed = 0;
 
-            for (const auto& point : frame->points) {
-                total_points++;
-                VoxelKey key = pointToVoxelKey(point, config.grid_size);
+                    for (const auto& point : frame->points) {
+                        local_total++;
+                        VoxelKey key = pointToVoxelKey(point, config.grid_size);
 
-                bool is_dynamic = true;
-                int window = config.frame_window;
+                        bool is_dynamic = true;
+                        int window = config.frame_window;
 
-                for (int offset = -window; offset <= window; ++offset) {
-                    if (offset == 0) continue;
-                    
-                    int neighbor_idx = static_cast<int>(frame_idx) + offset;
-                    if (neighbor_idx < 0 || neighbor_idx >= static_cast<int>(n_frames)) {
-                        continue;
+                        for (int offset = -window; offset <= window; ++offset) {
+                            if (offset == 0) continue;
+                            
+                            int neighbor_idx = static_cast<int>(frame_idx) + offset;
+                            if (neighbor_idx < 0 || neighbor_idx >= static_cast<int>(n_frames)) {
+                                continue;
+                            }
+
+                            if (grids[neighbor_idx].isOccupied(key)) {
+                                is_dynamic = false;
+                                break;
+                            }
+                        }
+
+                        if (is_dynamic) {
+                            local_removed++;
+                            frame_removed++;
+                        } else {
+                            local_filtered.push_back(point);
+                        }
                     }
 
-                    if (grids[neighbor_idx].isOccupied(key)) {
-                        is_dynamic = false;
-                        break;
-                    }
-                }
-
-                if (is_dynamic) {
-                    removed_points++;
-                    frame_removed++;
-                } else {
-                    local_filtered_points.push_back(point);
+                    frame_removed_counts[frame_idx] = frame_removed;
                 }
             }
+        );
 
-            frame_removed_counts[frame_idx] = frame_removed;
-        }
-
-#pragma omp critical
-        filtered_points.insert(filtered_points.end(), local_filtered_points.begin(), local_filtered_points.end());
-    }
+        // Merge thread-local results
+        for (auto& v : tls_total) total_points += v;
+        for (auto& v : tls_removed) removed_points += v;
+        for (auto& v : tls_filtered) filtered_points.insert(filtered_points.end(), v.begin(), v.end());
     } else {
         // Per-frame output mode: collect per-frame filtered clouds
-#pragma omp parallel reduction(+:total_points, removed_points)
-    {
-#pragma omp for schedule(dynamic)
-        for (size_t frame_idx = 0; frame_idx < n_frames; ++frame_idx) {
-            const CloudPtr& frame = frames[frame_idx];
-            int frame_removed = 0;
+        tbb::enumerable_thread_specific<int> tls_total(0), tls_removed(0);
 
-            for (const auto& point : frame->points) {
-                total_points++;
-                VoxelKey key = pointToVoxelKey(point, config.grid_size);
+        tbb::parallel_for(
+            tbb::blocked_range<size_t>(0, n_frames),
+            [&](const tbb::blocked_range<size_t>& r) {
+                auto& local_total = tls_total.local();
+                auto& local_removed = tls_removed.local();
+                for (size_t frame_idx = r.begin(); frame_idx < r.end(); ++frame_idx) {
+                    const CloudPtr& frame = frames[frame_idx];
+                    int frame_removed = 0;
 
-                bool is_dynamic = true;
-                int window = config.frame_window;
+                    for (const auto& point : frame->points) {
+                        local_total++;
+                        VoxelKey key = pointToVoxelKey(point, config.grid_size);
 
-                for (int offset = -window; offset <= window; ++offset) {
-                    if (offset == 0) continue;
-                    
-                    int neighbor_idx = static_cast<int>(frame_idx) + offset;
-                    if (neighbor_idx < 0 || neighbor_idx >= static_cast<int>(n_frames)) {
-                        continue;
+                        bool is_dynamic = true;
+                        int window = config.frame_window;
+
+                        for (int offset = -window; offset <= window; ++offset) {
+                            if (offset == 0) continue;
+                            
+                            int neighbor_idx = static_cast<int>(frame_idx) + offset;
+                            if (neighbor_idx < 0 || neighbor_idx >= static_cast<int>(n_frames)) {
+                                continue;
+                            }
+
+                            if (grids[neighbor_idx].isOccupied(key)) {
+                                is_dynamic = false;
+                                break;
+                            }
+                        }
+
+                        if (is_dynamic) {
+                            local_removed++;
+                            frame_removed++;
+                        } else {
+                            per_frame_filtered[frame_idx]->points.push_back(point);
+                        }
                     }
 
-                    if (grids[neighbor_idx].isOccupied(key)) {
-                        is_dynamic = false;
-                        break;
-                    }
-                }
-
-                if (is_dynamic) {
-                    removed_points++;
-                    frame_removed++;
-                } else {
-                    per_frame_filtered[frame_idx]->points.push_back(point);
+                    frame_removed_counts[frame_idx] = frame_removed;
                 }
             }
+        );
 
-            frame_removed_counts[frame_idx] = frame_removed;
-        }
-    }
+        for (auto& v : tls_total) total_points += v;
+        for (auto& v : tls_removed) removed_points += v;
     }
 
     for (size_t frame_idx = 0; frame_idx < n_frames; ++frame_idx) {
@@ -545,57 +572,61 @@ CloudPtr filterDynamicPointsRaycast(
     
     const auto& occupied_voxels = global_grid.getOccupiedVoxels();
     
-    for (size_t frame_idx = 0; frame_idx < frames.size(); ++frame_idx) {
-        const auto& frame = frames[frame_idx];
-        const Eigen::Vector3f& sensor_pos = frame.odom.position;
-        VoxelKey sensor_key = positionToVoxelKey(sensor_pos, config.grid_size);
-        
-        int frame_observations = 0;
-        int frame_penetrations = 0;
-        
-        std::unordered_map<VoxelKey, int, VoxelKeyHash> local_obs;
-        std::unordered_map<VoxelKey, int, VoxelKeyHash> local_pen;
-        
-        for (const auto& point : frame.cloud->points) {
-            Eigen::Vector3f point_pos(point.x, point.y, point.z);
-            VoxelKey point_key = pointToVoxelKey(point, config.grid_size);
-            
-            local_obs[point_key]++;
-            
-            if (point_key.x == sensor_key.x && point_key.y == sensor_key.y && point_key.z == sensor_key.z) {
-                continue;
-            }
-            
-            std::vector<VoxelKey> ray_voxels = raycastVoxels(sensor_pos, point_pos, config.grid_size);
-            
-            for (const auto& voxel_key : ray_voxels) {
-                if (occupied_voxels.find(voxel_key) != occupied_voxels.end()) {
-                    local_pen[voxel_key]++;
-                    frame_penetrations++;
+    tbb::parallel_for(
+        tbb::blocked_range<size_t>(0, frames.size()),
+        [&](const tbb::blocked_range<size_t>& r) {
+            for (size_t frame_idx = r.begin(); frame_idx < r.end(); ++frame_idx) {
+                const auto& frame = frames[frame_idx];
+                const Eigen::Vector3f& sensor_pos = frame.odom.position;
+                VoxelKey sensor_key = positionToVoxelKey(sensor_pos, config.grid_size);
+                
+                int frame_penetrations = 0;
+                
+                std::unordered_map<VoxelKey, int, VoxelKeyHash> local_obs;
+                std::unordered_map<VoxelKey, int, VoxelKeyHash> local_pen;
+                
+                for (const auto& point : frame.cloud->points) {
+                    Eigen::Vector3f point_pos(point.x, point.y, point.z);
+                    VoxelKey point_key = pointToVoxelKey(point, config.grid_size);
+                    
+                    local_obs[point_key]++;
+                    
+                    if (point_key.x == sensor_key.x && point_key.y == sensor_key.y && point_key.z == sensor_key.z) {
+                        continue;
+                    }
+                    
+                    std::vector<VoxelKey> ray_voxels = raycastVoxels(sensor_pos, point_pos, config.grid_size);
+                    
+                    for (const auto& voxel_key : ray_voxels) {
+                        if (occupied_voxels.find(voxel_key) != occupied_voxels.end()) {
+                            local_pen[voxel_key]++;
+                            frame_penetrations++;
+                        }
+                    }
+                }
+                
+                {
+                    std::lock_guard<std::mutex> lock(obs_mutex);
+                    for (const auto& [key, count] : local_obs) {
+                        observation_count[key] += count;
+                    }
+                }
+                {
+                    std::lock_guard<std::mutex> lock(pen_mutex);
+                    for (const auto& [key, count] : local_pen) {
+                        penetration_count[key] += count;
+                    }
+                }
+                
+                if (config.verbose) {
+                    static std::mutex log_mtx;
+                    std::lock_guard<std::mutex> lock(log_mtx);
+                    LOG(INFO) << "Frame " << frame_idx << ": " << local_obs.size() 
+                            << " observed, " << frame_penetrations << " penetrations";
                 }
             }
         }
-        
-        {
-            std::lock_guard<std::mutex> lock(obs_mutex);
-            for (const auto& [key, count] : local_obs) {
-                observation_count[key] += count;
-            }
-        }
-        {
-            std::lock_guard<std::mutex> lock(pen_mutex);
-            for (const auto& [key, count] : local_pen) {
-                penetration_count[key] += count;
-            }
-        }
-        
-        frame_observations = local_obs.size();
-        
-
-        LOG(INFO) << "Frame " << frame_idx << ": " << frame_observations 
-                << " observed, " << frame_penetrations << " penetrations";
-
-    }
+    );
 
     LOG(INFO) << "=== Raycast Method: Filtering dynamic voxels ===";
     
@@ -718,6 +749,7 @@ void printUsage(const char* program_name) {
               << "  --scans_prefix <str>     Only process PCD files with this prefix (default: empty)\n"
               << "  --disable_isolated       Disable isolated point removal\n"
               << "  --quiet                  Reduce output verbosity\n"
+              << "  --single_core            Single-core mode (disable parallelism)\n"
               << "  --help                   Show this help message\n";
 }
 
@@ -753,6 +785,8 @@ Config parseArgs(int argc, char** argv) {
             config.enable_isolated_removal = false;
         } else if (arg == "--quiet") {
             config.verbose = false;
+        } else if (arg == "--single_core") {
+            config.single_core = true;
         } else {
             LOG(WARNING) << "Unknown argument: " << arg;
         }
@@ -762,6 +796,17 @@ Config parseArgs(int argc, char** argv) {
 }
 
 void runDynamicRemoval(const Config& config) {
+    // TBB parallelism control
+    std::unique_ptr<tbb::global_control> tbb_control;
+    if (config.single_core) {
+        tbb_control.reset(new tbb::global_control(
+            tbb::global_control::max_allowed_parallelism, 1));
+    } else {
+        unsigned n = tbb::info::default_concurrency();
+        tbb_control.reset(new tbb::global_control(
+            tbb::global_control::max_allowed_parallelism, n));
+    }
+
     LOG(INFO) << "=== Dynamic Point Removal Configuration ===";
     LOG(INFO) << "Input directory: " << config.input_dir;
     if (!config.output_dir.empty()) {
@@ -772,6 +817,7 @@ void runDynamicRemoval(const Config& config) {
     LOG(INFO) << "Grid size: " << config.grid_size << " m";
     LOG(INFO) << "Min neighbor grids: " << config.min_neighbor_grids;
     LOG(INFO) << "Method: " << (config.method == RemovalMethod::TEMPORAL ? "Temporal" : "Raycast");
+    LOG(INFO) << "Single-core mode: " << (config.single_core ? "true" : "false");
     
     if (config.method == RemovalMethod::TEMPORAL) {
         LOG(INFO) << "Frame window: " << config.frame_window;

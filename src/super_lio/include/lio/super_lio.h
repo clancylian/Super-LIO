@@ -12,11 +12,14 @@
 #include <mutex>
 #include <condition_variable>
 #include <atomic>
+#include <memory>
 
 #include <pcl/io/pcd_io.h>
 #include <pcl/PCLPointCloud2.h>
 #include <pcl/common/transforms.h>
 #include <pcl/filters/voxel_grid.h>
+
+#include <tbb/global_control.h>
 
 #include "basic/alias.h"
 #include "common/ds.h"
@@ -138,6 +141,8 @@ protected:
   std::ofstream sc_pgo_odom_file_;
 
   std::atomic<bool> paused_{false};
+
+  std::unique_ptr<tbb::global_control> tbb_control_;  // single-core: max 1 thread
 };
 
 } // namespace END.

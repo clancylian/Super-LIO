@@ -96,3 +96,7 @@
     lio.sc_pgo.keyframe_gap: 5.0
     # 关键帧旋转角度阈值(度)，累计旋转超过此值抽取一帧
     lio.sc_pgo.keyframe_deg_gap: 10.0
+
+    # ======================== 单核模式 ========================
+    # 是否启用单核运行模式。true: 关闭TBB并行，LIO主管线串行执行
+    lio.single_core: false

@@ -348,7 +348,7 @@ void LoadParamFromRos(rclcpp::Node& node)
   node.declare_parameter<double>("lio.degeneracy.threshold", 100.0);
   node.get_parameter("lio.degeneracy.threshold", g_degeneracy_threshold);
 
-  node.declare_parameter<double>("lio.degeneracy.tikhonov_lambda", 1.0);
+  node.declare_parameter<double>("lio.degeneracy.tikhonov_lambda", 0.1);
   node.get_parameter("lio.degeneracy.tikhonov_lambda", g_tikhonov_lambda);
 
   LOG(INFO) << GREEN << " ---> [Param] degeneracy/detect_en: "

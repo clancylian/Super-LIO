@@ -119,7 +119,7 @@ namespace LI2Sup{
   /// Degeneracy detection + Tikhonov
   bool   g_degeneracy_detect_en = true;
   double g_degeneracy_threshold = 100.0;
-  double g_tikhonov_lambda = 1.0;
+  double g_tikhonov_lambda = 0.1;
 
   /// Adaptive weight
   bool   g_adaptive_weight_en = true;

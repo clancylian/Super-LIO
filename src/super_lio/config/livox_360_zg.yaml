@@ -170,10 +170,12 @@
     # ======================== 退化检测与正则化 ========================
     # 是否启用观测Hessian退化检测，在病态方向上添加Tikhonov正则化
     lio.degeneracy.detect_en: true
-    # 退化判定阈值：最小特征值低于此值时认为退化（在走廊方向等缺乏约束时生效）
+    # 退化判定阈值（条件数阈值）：min_eig * threshold < max_eig 时认为退化
+    # 典型值 100，越大越敏感
     lio.degeneracy.threshold: 100.0
-    # Tikhonov正则化强度（对角加常数，值越大退化方向越依赖IMU预测）
-    lio.degeneracy.tikhonov_lambda: 1.0
+    # Tikhonov正则化强度，lambda * trace(H)/6 加到 Hessian 对角
+    # 0.1 = 添加 10% Hessian 量级的对角正则化
+    lio.degeneracy.tikhonov_lambda: 0.1
 
     # ======================== 自适应观测权重 ========================
     # 是否启用距离相关的观测权重（替代硬编码×1000）

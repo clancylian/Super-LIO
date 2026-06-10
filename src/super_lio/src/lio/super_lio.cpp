@@ -1165,13 +1165,19 @@ void SuperLIO::Observe(){
       sum_HTVr += local_acc.HTVr;
     }
 
-    // Degeneracy detection: if minimum eigenvalue of observation Hessian is
-    // below threshold, the system lacks observability in that direction
-    // (e.g. corridor axis). Add Tikhonov regularization to prevent divergence.
+    // Degeneracy detection: use relative threshold (min/max eigenvalue ratio).
+    // When min_eig * threshold < max_eig, the Hessian is ill-conditioned
+    // (e.g. corridor axis lacks observability). Add scaled Tikhonov
+    // regularization to prevent divergence in the degenerate direction.
     if(g_degeneracy_detect_en){
       Eigen::SelfAdjointEigenSolver<M6d> eig(sum_HTVH);
-      if(eig.eigenvalues()(0) < g_degeneracy_threshold){
-        sum_HTVH += g_tikhonov_lambda * M6d::Identity();
+      double min_eig = eig.eigenvalues()(0);
+      double max_eig = eig.eigenvalues()(5);
+      // Relative check: degeneracy when condition number > threshold
+      if(min_eig * g_degeneracy_threshold < max_eig){
+        // Scale regularization strength to match Hessian magnitude
+        double hessian_scale = sum_HTVH.trace() / 6.0;
+        sum_HTVH += g_tikhonov_lambda * hessian_scale * M6d::Identity();
       }
     }
 

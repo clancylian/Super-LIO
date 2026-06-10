@@ -34,6 +34,7 @@ namespace LI2Sup{
   float  g_maxrange2;
   int    g_filter_rate;
   int    g_filter_offset = 0;
+  bool   g_enable_filter_offset = true;
   bool   g_enable_downsample;
   float  g_voxel_fliter_size;
   bool   g_intensity_filter_en = false;

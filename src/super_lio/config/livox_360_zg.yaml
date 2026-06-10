@@ -161,11 +161,11 @@
 
     # ======================== 单核模式 ========================
     # 是否启用单核运行模式。true: 关闭TBB并行，LIO主管线串行执行（Output/Save独立线程不受影响）; false: 正常并行
-    lio.single_core: false
+    lio.single_core: true
 
     # ======================== 快速Odom模式 ========================
     # 是否发布IMU预测位姿（低延迟，不经过ESKF更新）; false: 只发布校正后的位姿
-    lio.fast_odom: false
+    lio.fast_odom: true
 
     # ======================== 退化检测与正则化 ========================
     # 是否启用观测Hessian退化检测，在病态方向上添加Tikhonov正则化
@@ -185,7 +185,7 @@
 
         # IMU订阅的QoS可靠性设置。true: reliable(可靠传输); false: best_effort(尽力传输)
     # reliable: 保证数据完整性,适合关键数据; best_effort: 低延迟,适合高频传感器数据
-    lio.ros.imu_qos_reliable: false
+    lio.ros.imu_qos_reliable: true
     # LiDAR订阅的QoS可靠性设置。true: reliable(可靠传输); false: best_effort(尽力传输)
     # reliable: 保证数据完整性,适合关键数据; best_effort: 低延迟,适合高频传感器数据
     lio.ros.lidar_qos_reliable: false

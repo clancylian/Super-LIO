@@ -85,6 +85,9 @@ void LoadParamFromRos(rclcpp::Node& node)
   node.declare_parameter<int>("lio.sensor.filter_rate", 1);
   node.get_parameter("lio.sensor.filter_rate", g_filter_rate);
 
+  node.declare_parameter<bool>("lio.sensor.enable_filter_offset", true);
+  node.get_parameter("lio.sensor.enable_filter_offset", g_enable_filter_offset);
+
   node.declare_parameter<bool>("lio.sensor.enable_downsample", false);
   node.get_parameter("lio.sensor.enable_downsample", g_enable_downsample);
 
@@ -674,9 +677,12 @@ void ROSWrapper::livoxHandler(const livox_ros_driver2::msg::CustomMsg::SharedPtr
       }
     }
   }
-  // 更新偏移量
-  if(g_filter_rate > 0) {
-    g_filter_offset = (g_filter_offset + 1) % g_filter_rate;
+  // symmetric oscillation around 0: 0, N-1, 1, N-2, 2, N-3, ...
+  if(g_filter_rate > 1 && g_enable_filter_offset) {
+    static int g_filter_osc = 0;
+    int half = g_filter_osc / 2;
+    g_filter_offset = (g_filter_osc & 1) ? (g_filter_rate - 1 - half) : half;
+    g_filter_osc = (g_filter_osc + 1) % g_filter_rate;
   }
   lidar_data.start_time = this->now().seconds();
   lidar_data.end_time   = lidar_data.start_time + offset_time;
@@ -713,9 +719,12 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
       lidar_data.pc->emplace_back(
           pt.x, pt.y, pt.z, pt.intensity, offset_time);
     }
-    // 更新偏移量
-    if(g_filter_rate > 0) {
-      g_filter_offset = (g_filter_offset + 1) % g_filter_rate;
+    // symmetric oscillation around 0
+    if(g_filter_rate > 1 && g_enable_filter_offset) {
+      static int g_filter_osc = 0;
+      int half = g_filter_osc / 2;
+      g_filter_offset = (g_filter_osc & 1) ? (g_filter_rate - 1 - half) : half;
+      g_filter_osc = (g_filter_osc + 1) % g_filter_rate;
     }
     lidar_data.end_time = lidar_data.start_time + offset_time;
     break;
@@ -734,9 +743,12 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
       lidar_data.pc->emplace_back(
           pt.x, pt.y, pt.z, 1.0, offset_time);
     }
-    // 更新偏移量
-    if(g_filter_rate > 0) {
-      g_filter_offset = (g_filter_offset + 1) % g_filter_rate;
+    // symmetric oscillation around 0
+    if(g_filter_rate > 1 && g_enable_filter_offset) {
+      static int g_filter_osc = 0;
+      int half = g_filter_osc / 2;
+      g_filter_offset = (g_filter_osc & 1) ? (g_filter_rate - 1 - half) : half;
+      g_filter_osc = (g_filter_osc + 1) % g_filter_rate;
     }
     lidar_data.end_time = lidar_data.start_time + offset_time;
     break;
@@ -756,9 +768,12 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
       lidar_data.pc->emplace_back(
           pt.x, pt.y, pt.z, pt.intensity, pt.time);
     }
-    // 更新偏移量
-    if(g_filter_rate > 0) {
-      g_filter_offset = (g_filter_offset + 1) % g_filter_rate;
+    // symmetric oscillation around 0
+    if(g_filter_rate > 1 && g_enable_filter_offset) {
+      static int g_filter_osc = 0;
+      int half = g_filter_osc / 2;
+      g_filter_offset = (g_filter_osc & 1) ? (g_filter_rate - 1 - half) : half;
+      g_filter_osc = (g_filter_osc + 1) % g_filter_rate;
     }
     lidar_data.end_time = lidar_data.start_time + lidar_data.pc->points.back().offset_time;
     break;
@@ -778,9 +793,12 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
       lidar_data.pc->emplace_back(
           pt.x, pt.y, pt.z, pt.intensity, offset_time);
     }
-    // 更新偏移量
-    if(g_filter_rate > 0) {
-      g_filter_offset = (g_filter_offset + 1) % g_filter_rate;
+    // symmetric oscillation around 0
+    if(g_filter_rate > 1 && g_enable_filter_offset) {
+      static int g_filter_osc = 0;
+      int half = g_filter_osc / 2;
+      g_filter_offset = (g_filter_osc & 1) ? (g_filter_rate - 1 - half) : half;
+      g_filter_osc = (g_filter_osc + 1) % g_filter_rate;
     }
     lidar_data.end_time = lidar_data.start_time + offset_time;
     break;
@@ -800,9 +818,12 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
       lidar_data.pc->emplace_back(
           pt.x, pt.y, pt.z, pt.intensity, offset_time);
     }
-    // 更新偏移量
-    if(g_filter_rate > 0) {
-      g_filter_offset = (g_filter_offset + 1) % g_filter_rate;
+    // symmetric oscillation around 0
+    if(g_filter_rate > 1 && g_enable_filter_offset) {
+      static int g_filter_osc = 0;
+      int half = g_filter_osc / 2;
+      g_filter_offset = (g_filter_osc & 1) ? (g_filter_rate - 1 - half) : half;
+      g_filter_osc = (g_filter_osc + 1) % g_filter_rate;
     }
     lidar_data.end_time = lidar_data.start_time + offset_time;
     break;
@@ -843,9 +864,12 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
         lidar_data.pc->emplace_back(
             ros_x, ros_y, ros_z, pt.intensity, offset_time);
       }
-      // 更新偏移量
-      if(g_filter_rate > 0) {
-        g_filter_offset = (g_filter_offset + 1) % g_filter_rate;
+      // symmetric oscillation around 0
+      if(g_filter_rate > 1 && g_enable_filter_offset) {
+        static int g_filter_osc = 0;
+        int half = g_filter_osc / 2;
+        g_filter_offset = (g_filter_osc & 1) ? (g_filter_rate - 1 - half) : half;
+        g_filter_osc = (g_filter_osc + 1) % g_filter_rate;
       }
       lidar_data.end_time = lidar_data.start_time + (max_time - min_time);
     } else {
@@ -866,9 +890,12 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
         lidar_data.pc->emplace_back(
             ros_x, ros_y, ros_z, pt.intensity, 0.0);
       }
-      // 更新偏移量
-      if(g_filter_rate > 0) {
-        g_filter_offset = (g_filter_offset + 1) % g_filter_rate;
+      // symmetric oscillation around 0
+      if(g_filter_rate > 1 && g_enable_filter_offset) {
+        static int g_filter_osc = 0;
+        int half = g_filter_osc / 2;
+        g_filter_offset = (g_filter_osc & 1) ? (g_filter_rate - 1 - half) : half;
+        g_filter_osc = (g_filter_osc + 1) % g_filter_rate;
       }
       lidar_data.end_time = lidar_data.start_time;
     }

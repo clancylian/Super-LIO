@@ -1173,11 +1173,26 @@ void SuperLIO::Observe(){
       Eigen::SelfAdjointEigenSolver<M6d> eig(sum_HTVH);
       double min_eig = eig.eigenvalues()(0);
       double max_eig = eig.eigenvalues()(5);
+      double cond_num = (min_eig > 1e-12) ? max_eig / min_eig : 1e12;
+      // Diagnostic: log every 50 frames
+      static int diag_count = 0;
+      if(++diag_count % 50 == 0){
+        LOG(INFO) << "[Degeneracy] frame=" << diag_count
+                  << " effect_pts=" << effect_knn_num_
+                  << " eig=[ " << eig.eigenvalues().transpose() << " ]"
+                  << " cond=" << cond_num
+                  << " trace=" << sum_HTVH.trace();
+      }
       // Relative check: degeneracy when condition number > threshold
-      if(min_eig * g_degeneracy_threshold < max_eig){
+      if(cond_num > g_degeneracy_threshold){
         // Scale regularization strength to match Hessian magnitude
         double hessian_scale = sum_HTVH.trace() / 6.0;
-        sum_HTVH += g_tikhonov_lambda * hessian_scale * M6d::Identity();
+        double reg = g_tikhonov_lambda * hessian_scale;
+        sum_HTVH += reg * M6d::Identity();
+        if(diag_count % 50 == 0){
+          LOG(WARNING) << "[Degeneracy] REGULARIZED cond=" << cond_num
+                       << " reg_strength=" << reg;
+        }
       }
     }
 

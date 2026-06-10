@@ -18,6 +18,15 @@
     # 每隔多少帧自动保存一次增量点云到PCD文件夹，用于断点恢复; 0或负数表示不自动保存
     lio.map.save_interval: 500
 
+    # 点云切片保存前缀，用于多雷达同时建图时区分不同雷达的切片
+    # 例如: "front_" -> 保存为 front_scans_0.pcd, front_scans_1.pcd
+    # 空字符串表示无前缀（默认）
+    # lio.map.pcd_prefix: "front_"
+
+    # lio.ros.lidar_topic: "/front_lidar"
+    # lio.ros.imu_topic: "/front_lidar/imu"
+    # lio.ros.map_save_service_topic: "/map_save
+
     # ======================== ROS话题相关参数 ========================
     # 订阅的LiDAR点云话题名
     lio.ros.lidar_topic: "livox/lidar"
@@ -43,11 +52,13 @@
     #   9 = ROBOSENSE_AIRY (速腾聚创AirY雷达)
     lio.sensor.lidar_type: 1
     # 最小有效距离(米)，小于此距离的点被剔除，用于去除近距离噪点/自车点
-    lio.sensor.blind: 0.3
+    lio.sensor.blind: 0.1
     # 最大有效距离(米)，大于此距离的点被剔除，用于去除远距离噪声点
     lio.sensor.maxrange: 100.0
     # 点云采样间隔，每隔N个点取1个。1=不降采样; 3=每3个点取1个，减少计算量
-    lio.sensor.filter_rate: 1
+    lio.sensor.filter_rate: 3
+    # 是否启用filter_rate的对称震荡offset，false则每帧固定取同一子集（可能导致退化场景漂移）
+    lio.sensor.enable_filter_offset: false
     # 是否对去畸变后的点云进行体素滤波降采样
     lio.sensor.enable_downsample: true
     # 点云体素滤波的体素大小(米)，值越大点云越稀疏，计算越快
@@ -100,6 +111,10 @@
     lio.kf.kf_max_iterations: 4
     # 是否在初始化时进行重力对齐。true: 利用IMU静置数据估计初始姿态使Z轴朝上
     lio.kf.kf_align_gravity: true
+    # - 0 : 参考重力指向 +X轴
+    # - 1 : 参考重力指向 +Y轴
+    # - 2 : 参考重力指向 -Z轴 （默认值）
+    # lio.kf.ref_gravity_axis: 2
     # 卡尔曼滤波迭代收敛阈值，当状态更新量小于此值时提前退出迭代
     lio.kf.kf_quit_eps: 0.001
 
@@ -124,7 +139,7 @@
     lio.output.dense_body: true
     # 地图发布时的降采样步长，每隔N个体素发布1个，增大可减少发布数据量
     lio.output.pub_step: 1
-    # 是否发布base_footprint的TF变换（world->base_footprint）
+    # 是否发布base_footprint的TF变换（world->base_footprint），该frame保持平行于地面
     lio.output.footprint_pub_en: true
     # base_footprint的TF帧名
     lio.output.tf_base_footprint_frame: "base_footprint"
@@ -155,6 +170,40 @@
     # 是否去除孤立体素点（无邻居的离散点）
     lio.dynamic_removal.isolated_removal: false
 
+    # 仅做点云去畸变和降采样模式，不计算LIO
+    # 启用后: 只进行IMU传播去畸变+降采样，跳过观测和地图更新
+    # 默认: false（正常计算LIO）
+    lio.lio_only_undistort: false
+    
+    # ======================== 单核模式 ========================
+    # 是否启用单核运行模式。true: 关闭TBB并行，LIO主管线串行执行。建议绑定单核时开启
+    lio.single_core: true
+
+    # ======================== 快速Odom模式 ========================
+    # 是否在主odom及tf发布仅IMU预测位姿（极低延迟，不经过ESKF更新，发布tf后再做修正，可能导致少量定位误差）
+    lio.fast_odom: false
+
+    # ======================== 退化检测与正则化 ========================
+    # 是否启用观测Hessian退化检测，在病态方向上添加Tikhonov正则化
+    lio.degeneracy.detect_en: true
+    # 退化判定阈值（条件数阈值）：min_eig * threshold < max_eig 时认为退化
+    # 典型值 100，越大越敏感
+    lio.degeneracy.threshold: 100.0
+    # Tikhonov正则化强度，lambda * trace(H)/6 加到 Hessian 对角
+    # 0.1 = 添加 10% Hessian 量级的对角正则化，越大退化方向越依赖IMU预测
+    lio.degeneracy.tikhonov_lambda: 0.3
+
+    # ======================== 自适应观测权重 ========================
+    lio.adaptive_weight.en: false
+    lio.adaptive_weight.sigma: 30.0
+    
+    # IMU订阅的QoS可靠性设置。true: reliable(可靠传输); false: best_effort(尽力传输)
+    # reliable: 保证数据完整性,适合关键数据; best_effort: 低延迟,适合高频传感器数据
+    lio.ros.imu_qos_reliable: true
+    # LiDAR订阅的QoS可靠性设置。true: reliable(可靠传输); false: best_effort(尽力传输)
+    # reliable: 保证数据完整性,适合关键数据; best_effort: 低延迟,适合高频传感器数据
+    lio.ros.lidar_qos_reliable: false
+
     # ======================== SC-PGO 离线处理参数 ========================
     # 是否启用 SC-PGO 兼容数据输出（输出 body-frame 扫描 + KITTI 位姿到 Scans/ 目录）
     lio.sc_pgo.enable: false
@@ -162,20 +211,3 @@
     lio.sc_pgo.keyframe_gap: 5.0
     # 关键帧旋转角度阈值(度)，累计旋转超过此值抽取一帧
     lio.sc_pgo.keyframe_deg_gap: 10.0
-
-    # ======================== 单核模式 ========================
-    # 是否启用单核运行模式。true: 关闭TBB并行，LIO主管线串行执行
-    lio.single_core: false
-
-    # ======================== 快速Odom模式 ========================
-    # 是否发布IMU预测位姿（低延迟，不经过ESKF更新）
-    lio.fast_odom: false
-
-    # ======================== 退化检测与正则化 ========================
-    lio.degeneracy.detect_en: true
-    lio.degeneracy.threshold: 100.0
-    lio.degeneracy.tikhonov_lambda: 1.0
-
-    # ======================== 自适应观测权重 ========================
-    lio.adaptive_weight.en: true
-    lio.adaptive_weight.sigma: 30.0

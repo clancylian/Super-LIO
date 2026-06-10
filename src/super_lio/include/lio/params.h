@@ -149,6 +149,7 @@ namespace LI2Sup{
    extern bool   g_degeneracy_detect_en;
    extern double g_degeneracy_threshold;
    extern double g_tikhonov_lambda;
+  extern int    g_min_effect_pts;
 
    /// Adaptive observation weight: replace flat ×1000 with distance-dependent weight
    extern bool   g_adaptive_weight_en;

@@ -121,6 +121,7 @@ namespace LI2Sup{
   bool   g_degeneracy_detect_en = true;
   double g_degeneracy_threshold = 100.0;
   double g_tikhonov_lambda = 0.1;
+  int    g_min_effect_pts = 100;
 
   /// Adaptive weight
   bool   g_adaptive_weight_en = true;

@@ -354,12 +354,17 @@ void LoadParamFromRos(rclcpp::Node& node)
   node.declare_parameter<double>("lio.degeneracy.tikhonov_lambda", 0.1);
   node.get_parameter("lio.degeneracy.tikhonov_lambda", g_tikhonov_lambda);
 
+  node.declare_parameter<int>("lio.degeneracy.min_effect_pts", 100);
+  node.get_parameter("lio.degeneracy.min_effect_pts", g_min_effect_pts);
+
   LOG(INFO) << GREEN << " ---> [Param] degeneracy/detect_en: "
             << (g_degeneracy_detect_en ? "true" : "false") << RESET;
   LOG(INFO) << GREEN << " ---> [Param] degeneracy/threshold: "
             << g_degeneracy_threshold << RESET;
   LOG(INFO) << GREEN << " ---> [Param] degeneracy/tikhonov_lambda: "
             << g_tikhonov_lambda << RESET;
+  LOG(INFO) << GREEN << " ---> [Param] degeneracy/min_effect_pts: "
+            << g_min_effect_pts << RESET;
 
   // ================= adaptive weight =================
   node.declare_parameter<bool>("lio.adaptive_weight.en", true);

@@ -1075,7 +1075,8 @@ void SuperLIO::DownSampleOnly(){
 struct ThreadACC{
   M6d HTVH = M6d::Zero();
   V6d HTVr = V6d::Zero();
-  ThreadACC(): HTVH(M6d::Zero()), HTVr(V6d::Zero()) {}
+  int   valid_count = 0;
+  ThreadACC(): HTVH(M6d::Zero()), HTVr(V6d::Zero()), valid_count(0) {}
 };
 
 
@@ -1154,15 +1155,32 @@ void SuperLIO::Observe(){
       
             local_acc.HTVH += J * weight * J.transpose();
             local_acc.HTVr -= J * weight * error;
+            local_acc.valid_count++;
           }
         }
     });
 
     M6d sum_HTVH = M6d::Zero();
     V6d sum_HTVr = V6d::Zero();
+    int  total_valid = 0;
     for(const auto& local_acc : tls_acc){
       sum_HTVH += local_acc.HTVH;
       sum_HTVr += local_acc.HTVr;
+      total_valid += local_acc.valid_count;
+    }
+
+    // Skip observation update if too few valid point-to-plane matches.
+    // When effect_pts < g_min_effect_pts the Hessian is driven by noise
+    // and the ESKF can diverge. Rely on IMU propagation only for this frame.
+    if(total_valid < g_min_effect_pts){
+      static int skip_count = 0;
+      if(++skip_count % 20 == 0){
+        LOG(WARNING) << "[Observe] SKIP update: valid_pts=" << total_valid
+                     << " < min=" << g_min_effect_pts;
+      }
+      HTVH = M6::Zero();
+      HTVr = V6::Zero();
+      return;
     }
 
     // Degeneracy detection: use relative threshold (min/max eigenvalue ratio).
@@ -1178,7 +1196,7 @@ void SuperLIO::Observe(){
       static int diag_count = 0;
       if(++diag_count % 50 == 0){
         LOG(INFO) << "[Degeneracy] frame=" << diag_count
-                  << " effect_pts=" << effect_knn_num_
+                  << " effect_pts=" << total_valid
                   << " eig=[ " << eig.eigenvalues().transpose() << " ]"
                   << " cond=" << cond_num
                   << " trace=" << sum_HTVH.trace();

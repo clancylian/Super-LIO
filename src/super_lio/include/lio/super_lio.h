@@ -117,6 +117,7 @@ protected:
   std::vector<std::pair<BASIC::M6, BASIC::V6>> H_R_;
   std::vector<std::array<double, 4>> abcd_vec_;
   int pcd_index_ = -1;
+  bool observe_skipped_ = false;
 
   Timer time_record_;
 

@@ -399,11 +399,12 @@ void SuperLIO::stateProcess(){
     if(g_time_eva){
       time_record_.Evaluate([this]() { DownSample(); }, "[DownSample]");
       time_record_.Evaluate([this]() { Observe(); }, "[Observe]");
-      time_record_.Evaluate([this]() { UpdateMap(); }, "[UpdateMap]");
+      if(!observe_skipped_)
+        time_record_.Evaluate([this]() { UpdateMap(); }, "[UpdateMap]");
     }else{
       DownSample();
       Observe();
-      UpdateMap();
+      if(!observe_skipped_) UpdateMap();
     }
     Output();
     caceData();
@@ -419,11 +420,12 @@ void SuperLIO::stateProcess(){
   if(g_time_eva){
     time_record_.Evaluate([this]() { DownSample(); }, "[DownSample]");
     time_record_.Evaluate([this]() { Observe(); }, "[Observe]");
-    time_record_.Evaluate([this]() { UpdateMap(); }, "[UpdateMap]");
+    if(!observe_skipped_)
+      time_record_.Evaluate([this]() { UpdateMap(); }, "[UpdateMap]");
   }else{
     DownSample();
     Observe();
-    UpdateMap();
+    if(!observe_skipped_) UpdateMap();
   }
   Output();
   caceData();
@@ -1102,6 +1104,7 @@ void SuperLIO::Observe(){
   );
 
   ivox_->reset_max_group();
+  observe_skipped_ = false;
   int iter_num = 0;
 
   kf_->UpdateObserve([&, this](const ESKF::KFState &kf_state, M6 &HTVH, V6 &HTVr) {
@@ -1173,6 +1176,7 @@ void SuperLIO::Observe(){
     // When effect_pts < g_min_effect_pts the Hessian is driven by noise
     // and the ESKF can diverge. Rely on IMU propagation only for this frame.
     if(total_valid < g_min_effect_pts){
+      observe_skipped_ = true;
       static int skip_count = 0;
       if(++skip_count % 20 == 0){
         LOG(WARNING) << "[Observe] SKIP update: valid_pts=" << total_valid
@@ -1192,25 +1196,16 @@ void SuperLIO::Observe(){
       double min_eig = eig.eigenvalues()(0);
       double max_eig = eig.eigenvalues()(5);
       double cond_num = (min_eig > 1e-12) ? max_eig / min_eig : 1e12;
-      // Diagnostic: log every 50 frames
-      static int diag_count = 0;
-      if(++diag_count % 50 == 0){
-        LOG(INFO) << "[Degeneracy] frame=" << diag_count
-                  << " effect_pts=" << total_valid
-                  << " eig=[ " << eig.eigenvalues().transpose() << " ]"
-                  << " cond=" << cond_num
-                  << " trace=" << sum_HTVH.trace();
-      }
       // Relative check: degeneracy when condition number > threshold
       if(cond_num > g_degeneracy_threshold){
         // Scale regularization strength to match Hessian magnitude
         double hessian_scale = sum_HTVH.trace() / 6.0;
         double reg = g_tikhonov_lambda * hessian_scale;
         sum_HTVH += reg * M6d::Identity();
-        if(diag_count % 50 == 0){
-          LOG(WARNING) << "[Degeneracy] REGULARIZED cond=" << cond_num
-                       << " reg_strength=" << reg;
-        }
+        LOG(WARNING) << "[Degeneracy] REGULARIZED cond=" << cond_num
+                     << " reg_strength=" << reg
+                     << " effect_pts=" << total_valid
+                     << " eig=[ " << eig.eigenvalues().transpose() << " ]";
       }
     }
 

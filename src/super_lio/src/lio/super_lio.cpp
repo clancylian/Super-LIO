@@ -398,12 +398,11 @@ void SuperLIO::stateProcess(){
     if(g_time_eva){
       time_record_.Evaluate([this]() { DownSample(); }, "[DownSample]");
       time_record_.Evaluate([this]() { Observe(); }, "[Observe]");
-      if(!observe_skipped_)
-        time_record_.Evaluate([this]() { UpdateMap(); }, "[UpdateMap]");
+      time_record_.Evaluate([this]() { UpdateMap(); }, "[UpdateMap]");
     }else{
       DownSample();
       Observe();
-      if(!observe_skipped_) UpdateMap();
+      UpdateMap();
     }
     Output();
     caceData();
@@ -418,12 +417,11 @@ void SuperLIO::stateProcess(){
   if(g_time_eva){
     time_record_.Evaluate([this]() { DownSample(); }, "[DownSample]");
     time_record_.Evaluate([this]() { Observe(); }, "[Observe]");
-    if(!observe_skipped_)
-      time_record_.Evaluate([this]() { UpdateMap(); }, "[UpdateMap]");
+    time_record_.Evaluate([this]() { UpdateMap(); }, "[UpdateMap]");
   }else{
     DownSample();
     Observe();
-    if(!observe_skipped_) UpdateMap();
+    UpdateMap();
   }
   Output();
   caceData();

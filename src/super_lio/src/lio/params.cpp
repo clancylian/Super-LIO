@@ -114,8 +114,8 @@ namespace LI2Sup{
   /// Single-core mode
   bool g_single_core = false;
 
-  /// Fast odom
-  bool g_fast_odom = false;
+  /// Fast tf
+  bool g_fast_tf = false;
 
   /// Degeneracy detection + Tikhonov
   bool   g_degeneracy_detect_en = true;

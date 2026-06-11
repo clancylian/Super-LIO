@@ -337,12 +337,12 @@ void LoadParamFromRos(rclcpp::Node& node)
   LOG(INFO) << GREEN << " ---> [Param] single_core: "
             << (g_single_core ? "true" : "false") << RESET;
 
-  // ================= fast odom =================
-  node.declare_parameter<bool>("lio.fast_odom", false);
-  node.get_parameter("lio.fast_odom", g_fast_odom);
+  // ================= fast tf =================
+  node.declare_parameter<bool>("lio.fast_tf", false);
+  node.get_parameter("lio.fast_tf", g_fast_tf);
 
-  LOG(INFO) << GREEN << " ---> [Param] fast_odom: "
-            << (g_fast_odom ? "true" : "false") << RESET;
+  LOG(INFO) << GREEN << " ---> [Param] fast_tf: "
+            << (g_fast_tf ? "true" : "false") << RESET;
 
   // ================= degeneracy detection =================
   node.declare_parameter<bool>("lio.degeneracy.detect_en", true);
@@ -657,6 +657,67 @@ void ROSWrapper::imuHandler(const sensor_msgs::msg::Imu::SharedPtr msg){
     odom_robo.child_frame_id = "base_link";
     pub_imu_odom_->publish(odom_imu);
     pub_robo_odom_->publish(odom_robo);
+
+    // ================= fast_tf: IMU-rate transforms =================
+    if(g_fast_tf){
+      geometry_msgs::msg::TransformStamped tf_msg;
+      tf_msg.header.stamp = this->now();
+      tf_msg.header.frame_id = g_world_frame;
+      tf_msg.child_frame_id = g_imu_frame;
+
+      tf_msg.transform.translation.x = imu_state.p(0);
+      tf_msg.transform.translation.y = imu_state.p(1);
+      tf_msg.transform.translation.z = imu_state.p(2);
+
+      Eigen::Quaterniond q_imu(imu_state.R);
+      tf_msg.transform.rotation.x = q_imu.x();
+      tf_msg.transform.rotation.y = q_imu.y();
+      tf_msg.transform.rotation.z = q_imu.z();
+      tf_msg.transform.rotation.w = q_imu.w();
+
+      tf_broadcaster_->sendTransform(tf_msg);
+
+      if(g_footprint_pub_en){
+        geometry_msgs::msg::TransformStamped tf_footprint;
+        tf_footprint.header.stamp = this->now();
+        tf_footprint.header.frame_id = g_world_frame;
+        tf_footprint.child_frame_id = g_tf_base_footprint_frame;
+
+        tf_footprint.transform.translation.x = imu_state.p(0);
+        tf_footprint.transform.translation.y = imu_state.p(1);
+        tf_footprint.transform.translation.z = imu_state.p(2);
+
+        Eigen::Vector3f world_up;
+        if(g_ref_gravity_axis == 0)      world_up = Eigen::Vector3f(-1, 0, 0);
+        else if(g_ref_gravity_axis == 1) world_up = Eigen::Vector3f(0, -1, 0);
+        else                              world_up = Eigen::Vector3f(0, 0, 1);
+
+        Eigen::Vector3f lidar_fwd_local = Eigen::Vector3f::UnitZ();
+        Eigen::Vector3f lidar_fwd_world = Eigen::Quaternionf(imu_state.R.cast<float>()) * lidar_fwd_local;
+
+        Eigen::Vector3f fwd_proj = lidar_fwd_world - (lidar_fwd_world.dot(world_up)) * world_up;
+        fwd_proj.normalize();
+
+        Eigen::Vector3f foot_x = fwd_proj;
+        Eigen::Vector3f foot_z = world_up;
+        Eigen::Vector3f foot_y = foot_z.cross(foot_x);
+
+        Eigen::Matrix3f foot_mat;
+        foot_mat.col(0) = foot_x;
+        foot_mat.col(1) = foot_y;
+        foot_mat.col(2) = foot_z;
+
+        Eigen::Quaternionf q_foot(foot_mat);
+        q_foot.normalize();
+
+        tf_footprint.transform.rotation.x = q_foot.x();
+        tf_footprint.transform.rotation.y = q_foot.y();
+        tf_footprint.transform.rotation.z = q_foot.z();
+        tf_footprint.transform.rotation.w = q_foot.w();
+
+        tf_broadcaster_->sendTransform(tf_footprint);
+      }
+    }
   }
 }
 

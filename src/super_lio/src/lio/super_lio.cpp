@@ -395,7 +395,6 @@ void SuperLIO::stateProcess(){
     }else{
       Propagation_Undistort();
     }
-    if(g_fast_odom) data_wrapper_->pub_odom(kf_->GetNavState());
     if(g_time_eva){
       time_record_.Evaluate([this]() { DownSample(); }, "[DownSample]");
       time_record_.Evaluate([this]() { Observe(); }, "[Observe]");
@@ -416,7 +415,6 @@ void SuperLIO::stateProcess(){
   }else{
     Propagation_Undistort();
   }
-  if(g_fast_odom) data_wrapper_->pub_odom(kf_->GetNavState());
   if(g_time_eva){
     time_record_.Evaluate([this]() { DownSample(); }, "[DownSample]");
     time_record_.Evaluate([this]() { Observe(); }, "[Observe]");

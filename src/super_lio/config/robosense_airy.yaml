@@ -101,9 +101,9 @@
     # 是否启用单核运行模式。true: 关闭TBB并行，LIO主管线串行执行
     lio.single_core: false
 
-    # ======================== 快速Odom模式 ========================
-    # 是否发布IMU预测位姿（低延迟，不经过ESKF更新）
-    lio.fast_odom: false
+    # ======================== 快速TF模式 ========================
+    # 是否在IMU频率下发布tf（world->imu, world->base_footprint），降低tf延迟
+    lio.fast_tf: false
 
     # ======================== 退化检测与正则化 ========================
     lio.degeneracy.detect_en: true

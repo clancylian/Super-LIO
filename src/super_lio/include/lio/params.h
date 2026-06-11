@@ -141,9 +141,8 @@ namespace LI2Sup{
    /// independent threads (OutputThread, SaveThread) remain unaffected.
    extern bool g_single_core;
 
-   /// Fast odom: publish IMU-predicted pose immediately after undistortion
-   /// for minimal latency; full corrected odom still published by Output().
-   extern bool g_fast_odom;
+   /// Fast tf: publish IMU-rate transforms (world->imu, world->base_footprint)
+   extern bool g_fast_tf;
 
    /// Degeneracy detection + Tikhonov regularization on observation Hessian
    extern bool   g_degeneracy_detect_en;

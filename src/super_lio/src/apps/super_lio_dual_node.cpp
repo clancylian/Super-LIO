@@ -1,0 +1,43 @@
+#include <memory>
+#include <rclcpp/rclcpp.hpp>
+
+#include "ros/ROSWrapperDual.h"
+#include "lio/super_lio.h"
+
+#include <signal.h>
+
+void sigterm_handler_dual(int signum)
+{
+  rclcpp::shutdown();
+}
+
+using namespace LI2Sup;
+
+int main(int argc, char** argv)
+{
+  rclcpp::init(argc, argv);
+
+  signal(SIGTERM, sigterm_handler_dual);
+
+  auto data_wrapper = std::make_shared<ROSWrapperDual>();
+
+  auto lio = std::make_shared<SuperLIO>();
+  lio->setROSWrapper(data_wrapper);
+  data_wrapper->setSuperLIO(lio);
+  lio->init();
+
+  rclcpp::on_shutdown([lio]() {
+    lio->printTimeRecord();
+  });
+
+  auto timer = data_wrapper->create_wall_timer(
+    std::chrono::milliseconds(2),
+    [lio]() { lio->process(); },
+    data_wrapper->getSensorCallbackGroup()
+  );
+
+  rclcpp::spin(data_wrapper);
+
+  rclcpp::shutdown();
+  return 0;
+}

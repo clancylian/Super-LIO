@@ -1191,15 +1191,33 @@ void SuperLIO::Observe(){
     // and the ESKF can diverge. Rely on IMU propagation only for this frame.
     if(total_valid < g_min_effect_pts){
       observe_skipped_ = true;
+      consecutive_skip_count_++;
       static int skip_count = 0;
       if(++skip_count % 20 == 0){
         LOG(WARNING) << "[Observe] SKIP update: valid_pts=" << total_valid
                      << " < min=" << g_min_effect_pts;
       }
+
+      // When the robot is against a wall / in a featureless environment,
+      // consecutive skips cause IMU bias to drift unchecked, deforming
+      // undistorted point clouds into lines. Once the bias drifts, even
+      // after leaving the degraded area the matching can never recover.
+      // Reset bg/ba to zero after exceeding the threshold to break the cycle.
+      if(consecutive_skip_count_ > g_bias_reset_skip_threshold){
+        auto state = kf_->GetSysState();
+        V3 zero_bias = V3::Zero();
+        state.bg = zero_bias;
+        state.ba = zero_bias;
+        kf_->SetX(state);
+        LOG(WARNING) << "[Observe] Consecutive skips exceeds threshold — IMU bias reset to zero";
+        consecutive_skip_count_ = 0;
+      }
+
       HTVH = M6::Zero();
       HTVr = V6::Zero();
       return;
     }
+    consecutive_skip_count_ = 0;
 
     // Degeneracy detection: use relative threshold (min/max eigenvalue ratio).
     // When min_eig * threshold < max_eig, the Hessian is ill-conditioned
@@ -1216,10 +1234,15 @@ void SuperLIO::Observe(){
         double hessian_scale = sum_HTVH.trace() / 6.0;
         double reg = g_tikhonov_lambda * hessian_scale;
         sum_HTVH += reg * M6d::Identity();
-        LOG(WARNING) << "[Degeneracy] REGULARIZED cond=" << cond_num
-                     << " reg_strength=" << reg
-                     << " effect_pts=" << total_valid
-                     << " eig=[ " << eig.eigenvalues().transpose() << " ]";
+        static auto last_degen_log = std::chrono::steady_clock::now();
+        auto now_degen = std::chrono::steady_clock::now();
+        if(std::chrono::duration<double>(now_degen - last_degen_log).count() > 30.0){
+          LOG(WARNING) << "[Degeneracy] REGULARIZED cond=" << cond_num
+                       << " reg_strength=" << reg
+                       << " effect_pts=" << total_valid
+                       << " eig=[ " << eig.eigenvalues().transpose() << " ]";
+          last_degen_log = now_degen;
+        }
       }
     }
 

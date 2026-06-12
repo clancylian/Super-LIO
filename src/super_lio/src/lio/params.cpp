@@ -127,4 +127,7 @@ namespace LI2Sup{
   bool   g_adaptive_weight_en = true;
   double g_adaptive_weight_sigma = 30.0;
 
+  /// Bias reset after consecutive observe skips
+  int    g_bias_reset_skip_threshold = 50;
+
 }

@@ -154,6 +154,9 @@ namespace LI2Sup{
    extern bool   g_adaptive_weight_en;
    extern double g_adaptive_weight_sigma;
 
+   /// Max consecutive Observe-SKIP frames before resetting IMU bias
+   extern int    g_bias_reset_skip_threshold;
+
 }
 
 #endif

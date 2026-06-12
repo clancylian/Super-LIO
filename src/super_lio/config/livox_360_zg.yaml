@@ -177,6 +177,9 @@
     # 0.1 = 添加 10% Hessian 量级的对角正则化
     lio.degeneracy.tikhonov_lambda: 0.1
 
+    # 连续跳过观测更新的最大帧数，超限时重置IMU偏置（防止贴墙场景恶性漂移）
+    lio.bias_reset_skip_threshold: 50
+
     # ======================== 自适应观测权重 ========================
     # 是否启用距离相关的观测权重（替代硬编码×1000）
     lio.adaptive_weight.en: true

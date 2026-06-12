@@ -118,6 +118,7 @@ protected:
   std::vector<std::array<double, 4>> abcd_vec_;
   int pcd_index_ = -1;
   bool observe_skipped_ = false;
+  int consecutive_skip_count_ = 0;
 
   Timer time_record_;
 

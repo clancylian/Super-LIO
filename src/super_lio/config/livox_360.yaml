@@ -196,6 +196,9 @@
     # 根据日志：坏帧14~76点，好帧480~600点，建议80~120
     lio.degeneracy.min_effect_pts: 200
 
+    # 连续跳过观测更新的最大帧数，超限时重置IMU偏置（防止贴墙场景恶性漂移）
+    lio.bias_reset_skip_threshold: 50
+
     # ======================== 自适应观测权重 ========================
     lio.adaptive_weight.en: false
     lio.adaptive_weight.sigma: 30.0

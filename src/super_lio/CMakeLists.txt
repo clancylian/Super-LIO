@@ -104,6 +104,12 @@ target_link_libraries(super_lio_node
   ${cpp_typesupport_target}
 )
 
+add_executable(super_lio_dual_node src/apps/super_lio_dual_node.cpp)
+target_link_libraries(super_lio_dual_node
+  lio
+  ${cpp_typesupport_target}
+)
+
 add_executable(relocation_node src/apps/relocation_node.cpp)
 target_link_libraries(relocation_node
   lio
@@ -127,6 +133,7 @@ install(TARGETS
 
 install(TARGETS
   super_lio_node
+  super_lio_dual_node
   DESTINATION lib/${PROJECT_NAME}
 )
 

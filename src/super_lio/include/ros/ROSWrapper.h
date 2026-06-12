@@ -59,7 +59,8 @@ void livox2pcl(const livox_ros_driver2::msg::CustomMsg::SharedPtr& msg, BASIC::C
 
 class ROSWrapper : public rclcpp::Node {
 public:
-  explicit ROSWrapper(const rclcpp::NodeOptions& options = rclcpp::NodeOptions());
+  explicit ROSWrapper(const rclcpp::NodeOptions& options = rclcpp::NodeOptions(),
+                      const std::string& node_name = "front_lidar_node");
   ~ROSWrapper(){};
   using Ptr = std::shared_ptr<ROSWrapper>;
   bool sync_measure(MeasureGroup&);
@@ -103,7 +104,7 @@ public:
   void saveMapServiceCallback(const std_srvs::srv::Trigger::Request::SharedPtr request, 
                               const std_srvs::srv::Trigger::Response::SharedPtr response);
 
-private:
+protected:
   void imuHandler(const sensor_msgs::msg::Imu::SharedPtr msg);
 #ifdef LIVOX_SUPPORT
   void livoxHandler(const livox_ros_driver2::msg::CustomMsg::SharedPtr msg);
@@ -114,17 +115,7 @@ private:
   void setupIO();
   void setupServices();
 
-private:
-  rclcpp::CallbackGroup::SharedPtr cb_sensor_;
-  rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr sub_imu_;
-#ifdef LIVOX_SUPPORT
-  rclcpp::Subscription<livox_ros_driver2::msg::CustomMsg>::SharedPtr sub_lidar_;
-#endif
-  rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr sub_lidar_std_;
-
-  // 保存地图服务
-  rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr save_map_service_;
-
+protected:
   std::deque<IMUData>   imu_buffer_;
   std::deque<LidarData> lidar_buffer_;
   bool lidar_pushed_ = false;
@@ -134,10 +125,23 @@ private:
   ESKF::Ptr eskf_{nullptr};
   std::shared_ptr<class SuperLIO> super_lio_{nullptr};
 
+  rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pub_imu_odom_;   /// IMU fre   --> IMU frame
+  rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pub_robo_odom_;  /// IMU fre   --> Robot frame
+  std::shared_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
+
+private:
+  rclcpp::CallbackGroup::SharedPtr cb_sensor_;
+  rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr sub_imu_;
+#ifdef LIVOX_SUPPORT
+  rclcpp::Subscription<livox_ros_driver2::msg::CustomMsg>::SharedPtr sub_lidar_;
+#endif
+  rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr sub_lidar_std_;
+
+  rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr save_map_service_;
+
   nav_msgs::msg::Path path_;
   geometry_msgs::msg::PoseStamped msg2uav_;
   sensor_msgs::msg::PointCloud2 global_map_msg_;
-  std::shared_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
   std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
   std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
 
@@ -146,8 +150,6 @@ private:
 /// output.
 private:
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pub_odom_;       /// lidar fre --> IMU frame
-  rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pub_imu_odom_;   /// IMU fre   --> IMU frame
-  rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pub_robo_odom_;  /// IMU fre   --> Robot frame
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr pub_path_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub_cloud_world_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub_cloud_body_;

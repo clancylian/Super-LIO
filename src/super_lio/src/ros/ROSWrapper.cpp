@@ -366,6 +366,13 @@ void LoadParamFromRos(rclcpp::Node& node)
   LOG(INFO) << GREEN << " ---> [Param] degeneracy/min_effect_pts: "
             << g_min_effect_pts << RESET;
 
+  // ================= bias reset on consecutive skips =================
+  node.declare_parameter<int>("lio.bias_reset_skip_threshold", 50);
+  node.get_parameter("lio.bias_reset_skip_threshold", g_bias_reset_skip_threshold);
+
+  LOG(INFO) << GREEN << " ---> [Param] bias_reset_skip_threshold: "
+            << g_bias_reset_skip_threshold << RESET;
+
   // ================= adaptive weight =================
   node.declare_parameter<bool>("lio.adaptive_weight.en", true);
   node.get_parameter("lio.adaptive_weight.en", g_adaptive_weight_en);
@@ -474,8 +481,8 @@ inline builtin_interfaces::msg::Time toRosTime(double t_sec)
 }
 
 
-ROSWrapper::ROSWrapper(const rclcpp::NodeOptions& options)
-: rclcpp::Node("super_lio", options)
+ROSWrapper::ROSWrapper(const rclcpp::NodeOptions& options, const std::string& node_name)
+: rclcpp::Node(node_name, options)
 {
   LoadParamFromRos(*this);
   LOG(INFO) << GREEN << " ---> Using Lidar type: "

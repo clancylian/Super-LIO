@@ -130,4 +130,7 @@ namespace LI2Sup{
   /// Bias reset after consecutive observe skips
   int    g_bias_reset_skip_threshold = 50;
 
+  /// Share IVox map in dual mode
+  bool   g_share_ivox = true;
+
 }

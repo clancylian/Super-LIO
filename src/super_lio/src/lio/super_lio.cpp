@@ -90,6 +90,7 @@ inline bool compute_error(
 
 void SuperLIO::init(){
   ivox_.reset(new OctVoxMapType(OctVoxMapType::Options{g_ivox_resolution, g_ivox_capacity}));
+  ivox_rear_.reset(new OctVoxMapType(OctVoxMapType::Options{g_ivox_resolution, g_ivox_capacity}));
   kf_.reset(new ESKF());
   data_wrapper_->setESKF(kf_);
   
@@ -361,7 +362,10 @@ bool SuperLIO::map_init(){
     }
   );
 
-  ivox_->insert(points_world_v3_);
+  bool is_rear = (current_lidar_frame_ == "__rear__");
+  auto& ivox = (g_share_ivox || !is_rear) ? ivox_ : ivox_rear_;
+  ivox->insert(points_world_v3_);
+  ivox_rear_->insert(points_world_v3_);
   kf_->SetLastObsTime(measures_.lidar.end_time);
 
   // 20 Hz for 1.0 seconds. Integral coverage area > 70%
@@ -416,10 +420,25 @@ void SuperLIO::stateProcess(){
   }
   if(g_time_eva){
     time_record_.Evaluate([this]() { DownSample(); }, "[DownSample]");
+  }else{
+    DownSample();
+  }
+  // Transform rear points to front frame after voxel downsampling.
+  // Deferred here to save ~83% transform operations (voxel decimates heavily).
+  // The tiny lever-arm approximation error in Propagation_Undistort is <1cm
+  // for a 1m baseline with typical angular velocities, so negligible.
+  M3 rear_R; V3 rear_t;
+  if(data_wrapper_->getRearToFront(rear_R, rear_t)){
+    for(auto& pt : ds_undistort_->points){
+      V3 p(pt.x, pt.y, pt.z);
+      V3 p_front = rear_R * p + rear_t;
+      pt.x = p_front.x(); pt.y = p_front.y(); pt.z = p_front.z();
+    }
+  }
+  if(g_time_eva){
     time_record_.Evaluate([this]() { Observe(); }, "[Observe]");
     time_record_.Evaluate([this]() { UpdateMap(); }, "[UpdateMap]");
   }else{
-    DownSample();
     Observe();
     UpdateMap();
   }
@@ -1117,7 +1136,9 @@ void SuperLIO::Observe(){
     }
   );
 
-  ivox_->reset_max_group();
+  bool is_rear = (current_lidar_frame_ == "__rear__");
+  auto& ivox = (g_share_ivox || !is_rear) ? ivox_ : ivox_rear_;
+  ivox->reset_max_group();
   observe_skipped_ = false;
   int iter_num = 0;
 
@@ -1140,7 +1161,7 @@ void SuperLIO::Observe(){
 
           if(!need_converge){
             top_K.reset();
-            ivox_->getTopK(point_world, top_K);
+            ivox->getTopK(point_world, top_K);
             if(top_K.count < 4){
               effect_mask_[idx] = false;
               effect_knn_mask_[idx] = false;
@@ -1289,7 +1310,9 @@ void SuperLIO::UpdateMap() {
     }
   );
   
-  ivox_->insert(points_world_v3_);
+  bool is_rear = (current_lidar_frame_ == "__rear__");
+  auto& ivox_upd = (g_share_ivox || !is_rear) ? ivox_ : ivox_rear_;
+  ivox_upd->insert(points_world_v3_);
 
 }
 
@@ -1439,6 +1462,8 @@ void SuperLIO::OutputThread(){
     if(data.has_world_pc && data.world_pc){
       if(data.is_undistort_only){
         data_wrapper_->pub_cloud_world_undistort_only(data.world_pc, data.state.timestamp, data.lidar_frame);
+      }else if(data.lidar_frame == "__rear__"){
+        data_wrapper_->pub_cloud_world_rear(data.world_pc, data.state.timestamp);
       }else{
         data_wrapper_->pub_cloud_world(data.world_pc, data.state.timestamp);
       }
@@ -1447,6 +1472,8 @@ void SuperLIO::OutputThread(){
     if(data.has_body_pc && data.body_pc){
       if(data.is_undistort_only){
         data_wrapper_->pub_cloud_undistort_only(data.body_pc, data.state.timestamp, data.lidar_frame);
+      }else if(data.lidar_frame == "__rear__"){
+        data_wrapper_->pub_cloud_body_rear(data.body_pc, data.state.timestamp);
       }else{
         data_wrapper_->pub_cloud_body(data.body_pc, data.state.timestamp);
       }

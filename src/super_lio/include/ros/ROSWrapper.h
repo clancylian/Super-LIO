@@ -53,6 +53,14 @@ namespace LI2Sup{
 
 void LoadParamFromRos(rclcpp::Node& node);
 
+inline builtin_interfaces::msg::Time toRosTime(double t_sec)
+{
+  builtin_interfaces::msg::Time t;
+  t.sec = static_cast<int32_t>(std::floor(t_sec));
+  t.nanosec = static_cast<uint32_t>((t_sec - t.sec) * 1e9);
+  return t;
+}
+
 #ifdef LIVOX_SUPPORT
 void livox2pcl(const livox_ros_driver2::msg::CustomMsg::SharedPtr& msg, BASIC::CloudPtr& point_cloud);
 #endif
@@ -83,6 +91,9 @@ public:
   void pub_cloud_world_undistort_only(const BASIC::CloudPtr& pc, double time, const std::string& lidar_frame);
   void pub_cloud_body(const BASIC::CloudPtr& pc, double time);
   void pub_cloud_undistort_only(const BASIC::CloudPtr& pc, double time, const std::string& lidar_frame);
+  virtual void pub_cloud_world_rear(const BASIC::CloudPtr& pc, double time) {}
+  virtual void pub_cloud_body_rear(const BASIC::CloudPtr& pc, double time) {}
+  virtual bool getRearToFront(BASIC::M3& R, BASIC::V3& t) const { return false; }
   void pub_cloud2planner(const BASIC::CloudPtr& pc, double time);
   void pub_cloud_world_pose(const BASIC::CloudPtr& pc, 
                             const NavState& state);

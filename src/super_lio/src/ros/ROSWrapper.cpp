@@ -373,6 +373,13 @@ void LoadParamFromRos(rclcpp::Node& node)
   LOG(INFO) << GREEN << " ---> [Param] bias_reset_skip_threshold: "
             << g_bias_reset_skip_threshold << RESET;
 
+  // ================= share ivox (dual lidar) =================
+  node.declare_parameter<bool>("lio.dual.share_ivox", true);
+  node.get_parameter("lio.dual.share_ivox", g_share_ivox);
+
+  LOG(INFO) << GREEN << " ---> [Param] share_ivox: "
+            << (g_share_ivox ? "true" : "false") << RESET;
+
   // ================= adaptive weight =================
   node.declare_parameter<bool>("lio.adaptive_weight.en", true);
   node.get_parameter("lio.adaptive_weight.en", g_adaptive_weight_en);
@@ -469,15 +476,6 @@ inline double stampToSec(const builtin_interfaces::msg::Time& t)
 {
   return static_cast<double>(t.sec) +
          static_cast<double>(t.nanosec) * 1e-9;
-}
-
-
-inline builtin_interfaces::msg::Time toRosTime(double t_sec)
-{
-  builtin_interfaces::msg::Time t;
-  t.sec = static_cast<int32_t>(std::floor(t_sec));
-  t.nanosec = static_cast<uint32_t>((t_sec - t.sec) * 1e9);
-  return t;
 }
 
 

@@ -157,6 +157,9 @@ namespace LI2Sup{
    /// Max consecutive Observe-SKIP frames before resetting IMU bias
    extern int    g_bias_reset_skip_threshold;
 
+   /// Share IVox map between front and rear lidar in dual mode
+   extern bool   g_share_ivox;
+
 }
 
 #endif

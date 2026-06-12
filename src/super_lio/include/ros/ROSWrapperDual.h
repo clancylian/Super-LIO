@@ -19,6 +19,9 @@ public:
 private:
   // ---- overrides ----
   void imuHandler(const sensor_msgs::msg::Imu::SharedPtr msg) override;
+  void pub_cloud_world_rear(const BASIC::CloudPtr& pc, double time) override;
+  void pub_cloud_body_rear(const BASIC::CloudPtr& pc, double time) override;
+  bool getRearToFront(BASIC::M3& R, BASIC::V3& t) const override;
 
   void rearImuHandler(const sensor_msgs::msg::Imu::SharedPtr msg);
   void rearLidarHandler(const sensor_msgs::msg::PointCloud2::SharedPtr msg);
@@ -42,6 +45,10 @@ private:
   // rear subscriptions
   rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr sub_imu_rear_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr sub_lidar_rear_;
+
+  // rear output
+  rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub_cloud_world_rear_;
+  rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub_cloud_body_rear_;
 };
 
 } // namespace LI2Sup

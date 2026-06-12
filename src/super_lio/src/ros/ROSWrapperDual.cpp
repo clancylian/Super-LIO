@@ -87,6 +87,15 @@ void ROSWrapperDual::setupDualIO()
       std::bind(&ROSWrapperDual::rearLidarHandler, this, std::placeholders::_1),
       sub_opt);
 
+  auto pointcloud_qos = rclcpp::QoS(rclcpp::KeepLast(2))
+      .best_effort()
+      .durability_volatile();
+
+  pub_cloud_world_rear_ = create_publisher<sensor_msgs::msg::PointCloud2>(
+      "/rear_lidar/cloud_world", pointcloud_qos);
+  pub_cloud_body_rear_ = create_publisher<sensor_msgs::msg::PointCloud2>(
+      "/rear_lidar/body/cloud", pointcloud_qos);
+
   LOG(INFO) << GREEN << " ---> [Dual] Subscribed rear IMU: "
             << rear_imu_topic << RESET;
   LOG(INFO) << GREEN << " ---> [Dual] Subscribed rear LiDAR: "
@@ -355,8 +364,6 @@ void ROSWrapperDual::rearLidarHandler(const sensor_msgs::msg::PointCloud2::Share
     lidar_data.pc->reserve(plsize / g_filter_rate + 1);
     lidar_data.start_time = this->now().seconds();
 
-    const auto R = T_rear_to_front_.R_;
-    const auto t = T_rear_to_front_.t_;
     double offset_time = 0.0;
 
     for (int i = 0; i < plsize; i += g_filter_rate) {
@@ -367,12 +374,11 @@ void ROSWrapperDual::rearLidarHandler(const sensor_msgs::msg::PointCloud2::Share
       if (!validPoint(ros_x, ros_y, ros_z)) continue;
       if (g_intensity_filter_en && pt.intensity < g_intensity_min) continue;
 
-      V3 p_rear(ros_x, ros_y, ros_z);
-      V3 p_front = R * p_rear + t;
-
+      // Store in rear frame; transform to front frame deferred to after
+      // voxel downsampling in SuperLIO::stateProcess() to save compute.
       offset_time = pt.timestamp - min_time;
       lidar_data.pc->emplace_back(
-          p_front.x(), p_front.y(), p_front.z(),
+          ros_x, ros_y, ros_z,
           pt.intensity, offset_time);
     }
 
@@ -389,6 +395,33 @@ void ROSWrapperDual::rearLidarHandler(const sensor_msgs::msg::PointCloud2::Share
                  << g_lidar_type << " (only Airy=9 supported)";
     break;
   }
+}
+
+// =================== Rear Cloud Publishers ==================================
+
+bool ROSWrapperDual::getRearToFront(M3& R, V3& t) const
+{
+  R = T_rear_to_front_.R_;
+  t = T_rear_to_front_.t_;
+  return true;
+}
+
+void ROSWrapperDual::pub_cloud_world_rear(const CloudPtr& pc, double time)
+{
+  sensor_msgs::msg::PointCloud2 cloud;
+  pcl::toROSMsg(*pc, cloud);
+  cloud.header.frame_id = g_world_frame;
+  cloud.header.stamp = toRosTime(time);
+  pub_cloud_world_rear_->publish(cloud);
+}
+
+void ROSWrapperDual::pub_cloud_body_rear(const CloudPtr& pc, double time)
+{
+  sensor_msgs::msg::PointCloud2 cloud;
+  pcl::toROSMsg(*pc, cloud);
+  cloud.header.frame_id = g_imu_frame;
+  cloud.header.stamp = toRosTime(time);
+  pub_cloud_body_rear_->publish(cloud);
 }
 
 } // namespace LI2Sup

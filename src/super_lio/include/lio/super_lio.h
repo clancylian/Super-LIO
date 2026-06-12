@@ -94,6 +94,7 @@ protected:
   StateFn state_fn_;
   ESKF::Ptr kf_;
   OctVoxMapType::Ptr ivox_;
+  OctVoxMapType::Ptr ivox_rear_;
   VoxelGridClosest<BASIC::PointType> voxel_grid_fliter_;
   ROSWrapper::Ptr data_wrapper_;
   MeasureGroup measures_;

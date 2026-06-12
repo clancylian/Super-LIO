@@ -399,6 +399,7 @@ void SuperLIO::stateProcess(){
     }else{
       Propagation_Undistort();
     }
+    TransformRearToFront();
     if(g_time_eva){
       time_record_.Evaluate([this]() { DownSample(); }, "[DownSample]");
       time_record_.Evaluate([this]() { Observe(); }, "[Observe]");
@@ -418,27 +419,13 @@ void SuperLIO::stateProcess(){
   }else{
     Propagation_Undistort();
   }
+  TransformRearToFront();
   if(g_time_eva){
     time_record_.Evaluate([this]() { DownSample(); }, "[DownSample]");
-  }else{
-    DownSample();
-  }
-  // Transform rear points to front frame after voxel downsampling.
-  // Deferred here to save ~83% transform operations (voxel decimates heavily).
-  // The tiny lever-arm approximation error in Propagation_Undistort is <1cm
-  // for a 1m baseline with typical angular velocities, so negligible.
-  M3 rear_R; V3 rear_t;
-  if(data_wrapper_->getRearToFront(rear_R, rear_t)){
-    for(auto& pt : ds_undistort_->points){
-      V3 p(pt.x, pt.y, pt.z);
-      V3 p_front = rear_R * p + rear_t;
-      pt.x = p_front.x(); pt.y = p_front.y(); pt.z = p_front.z();
-    }
-  }
-  if(g_time_eva){
     time_record_.Evaluate([this]() { Observe(); }, "[Observe]");
     time_record_.Evaluate([this]() { UpdateMap(); }, "[UpdateMap]");
   }else{
+    DownSample();
     Observe();
     UpdateMap();
   }
@@ -1044,6 +1031,21 @@ void SuperLIO::Propagation_Undistort(){
       pt_full.z = eigen_point[2];
     }
   });
+}
+
+
+void SuperLIO::TransformRearToFront(){
+  if(current_lidar_frame_ != "__rear__") return;
+  if(scan_undistort_full_->empty()) return;
+
+  M3 R; V3 t;
+  if(!data_wrapper_->getRearToFront(R, t)) return;
+
+  for(auto& pt : scan_undistort_full_->points){
+    V3 p(pt.x, pt.y, pt.z);
+    V3 p_front = R * p + t;
+    pt.x = p_front.x(); pt.y = p_front.y(); pt.z = p_front.z();
+  }
 }
 
 

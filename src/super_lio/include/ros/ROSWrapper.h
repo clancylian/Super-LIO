@@ -105,7 +105,7 @@ public:
                               const std_srvs::srv::Trigger::Response::SharedPtr response);
 
 protected:
-  void imuHandler(const sensor_msgs::msg::Imu::SharedPtr msg);
+  virtual void imuHandler(const sensor_msgs::msg::Imu::SharedPtr msg);
 #ifdef LIVOX_SUPPORT
   void livoxHandler(const livox_ros_driver2::msg::CustomMsg::SharedPtr msg);
 #endif

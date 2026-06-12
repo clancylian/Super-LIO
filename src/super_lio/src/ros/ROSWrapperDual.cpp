@@ -132,21 +132,11 @@ bool ROSWrapperDual::tryFuseWithRearIMU(double front_time,
     return false;
 
   // ---- Fuse ----
-  // M3 from rear IMU to front IMU (rotation only)
-  M3 R_rearIMU_to_front = T_rear_to_front_.R_ * g_lidar_imu.R_.transpose()
-                          * g_lidar_imu.R_;  // rear_imu → front lidar → front imu
-  // Actually: rear IMU data is already rotated to front lidar frame in rearImuHandler.
-  // But here we need the raw rear IMU to front IMU rotation.
-  // Rear IMU raw → rotate to front lidar → g_lidar_imu.R_ to get to front IMU:
-  M3 R_rear_raw_to_front_imu = g_lidar_imu.R_ * T_rear_to_front_.R_
-                               * g_lidar_imu.R_.transpose();
-
-  V3 rear_gyr_front = R_rear_raw_to_front_imu * best->gyr;
-  V3 rear_acc_front = R_rear_raw_to_front_imu * best->acc;
-
-  // Simple 50/50 average: both IMUs of same type, equal weight
-  fused_gyr = (fused_gyr + rear_gyr_front) * 0.5;
-  fused_acc = (fused_acc + rear_acc_front) * 0.5;
+  // Both the front IMU data (fused_acc/gyr) and the rear IMU data
+  // (best->acc/gyr) are already in the front LiDAR coordinate frame,
+  // rotated in their respective handlers. Direct 50/50 average.
+  fused_gyr = (fused_gyr + best->gyr) * 0.5;
+  fused_acc = (fused_acc + best->acc) * 0.5;
 
   return true;
 }

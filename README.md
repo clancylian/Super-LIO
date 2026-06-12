@@ -175,9 +175,24 @@ ros2 launch super_lio gazebo_mid360.py
 |------|---------|---------|------|
 | 四足机器人 | `Livox_mid360.py` | `livox_360.yaml` | 默认四足机器人配置 |
 | 无人机 | `Livox_mid360_drone.py` | `livox_360_drone.yaml` | 无人机专用配置 |
+| 双雷达 | `dual_lidar.launch.py` | `dual_lidar.yaml` | 前后双Radar共享ESKF+IVox |
 | Gazebo 仿真 | `gazebo_mid360.py` | `gazebo_mid360.yaml` | 仿真环境配置 |
 
 各配置针对对应平台的传感器安装方式、运动特性进行了优化。
+
+### 双雷达融合
+
+系统支持在同一 Super-LIO 实例中融合前后两个雷达的数据，共享 ESKF 状态和 IVox 地图：
+
+- **交替观测**：两个雷达的帧按到达顺序交替触发 `Observe()`，等效约 20Hz 观测频率，两个约束之间由 IMU `Predict()` 衔接
+- **共享地图**：两个雷达的点云统一插入同一个 IVox 体素地图，建图信息互补
+- **抗退化**：前雷达贴墙时后雷达可补上有效观测，大幅减少因单侧无效点导致的漂移和恶性循环
+- **双 IMU 融合降噪**：前后 IMU 时间对齐（2ms 窗口）后按 50/50 平均，陀螺仪直接平均、加计经旋转对齐后平均，理论噪声降低约 41%
+- **外参配置**：通过 `lio.dual.rear_to_front` 配置后雷达到前雷达的 6-DOF 变换，支持任意刚性安装
+
+```yaml
+# 通过 lio.dual.imu_fusion: false 可退化为单 IMU 模式
+```
 
 ### 可视化与坐标系增强
 
@@ -243,6 +258,26 @@ ros2 launch super_lio Robosense_airy.py
 ```
 
 Airy 雷达的默认话题为 `/front_lidar`（点云）和 `/front_lidar/imu`（IMU），如需修改请在 `config/robosense_airy.yaml` 中调整。
+
+#### 🤖 双雷达融合模式
+
+```bash
+ros2 launch super_lio dual_lidar.launch.py
+```
+
+双雷达模式在单个 Super-LIO 实例中同时处理前后两个 Airy 雷达的数据，共享 ESKF 状态和 IVox 地图，等效约 20Hz 观测频率。前雷达贴墙时后雷达可补上观测，避免单侧退化导致漂移。配置文件 `config/dual_lidar.yaml` 中的关键参数：
+
+```yaml
+# 后雷达话题
+lio.dual.rear_lidar_topic: "/rear_lidar"
+lio.dual.rear_imu_topic: "/rear_lidar/imu"
+# 后雷达到前雷达外参 [tx, ty, tz, roll, pitch, yaw(deg)]
+lio.dual.rear_to_front: [0.0, 0.0, 1.028, 180.0, 180.0, 0.0]
+# 前后IMU融合降噪（陀螺仪/加计平均，噪声降低约41%）
+lio.dual.imu_fusion: true
+```
+
+设置 `lio.dual.imu_fusion: false` 可关闭 IMU 融合，仅使用前雷达 IMU。
 
 #### 🛸 无人机配置
 
@@ -323,5 +358,12 @@ Super-LIO 在涵盖室内、室外和大规模场景的多个真实数据集上�
   - Optimize point extraction algorithm and sampling strategy
   - Separate point cloud publishing to independent thread
   - Multiple computation performance optimizations and stability improvements
+
+- 2026-06-11
+  - Add dual-lidar fusion (shared ESKF + IVox, alternate observation, anti-degradation)
+  - Add dual-IMU temporal fusion with noise reduction (~41% theoretical)
+  - Add consecutive observe-SKIP bias reset to break wall-hugging dead-cycle
+  - Fast-tf mode: publish IMU-rate transforms (world→imu, world→base_footprint)
+  - Throttle degeneracy log output to once per 30s
  
 </details>

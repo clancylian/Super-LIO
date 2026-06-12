@@ -71,7 +71,7 @@ public:
                       const std::string& node_name = "front_lidar_node");
   ~ROSWrapper(){};
   using Ptr = std::shared_ptr<ROSWrapper>;
-  bool sync_measure(MeasureGroup&);
+  virtual bool sync_measure(MeasureGroup&);
 
   void setESKF(ESKF::Ptr& eskf) { eskf_ = eskf;}
   

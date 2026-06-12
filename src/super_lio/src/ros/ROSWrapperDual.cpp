@@ -21,6 +21,44 @@ ROSWrapperDual::ROSWrapperDual(const rclcpp::NodeOptions& options)
 }
 
 
+bool ROSWrapperDual::sync_measure(MeasureGroup& meas)
+{
+  if (lidar_buffer_.empty() || imu_buffer_.empty())
+    return false;
+
+  if (!lidar_pushed_) {
+    meas.lidar = lidar_buffer_.front();
+    lidar_pushed_ = true;
+  }
+
+  // Per-source stale-frame check: rear uses its own last timestamp
+  bool is_rear = (meas.lidar.frame_id == "__rear__");
+  double& last_src = is_rear ? last_timestamp_lidar_rear_ : last_timestamp_lidar_;
+  if (last_src > meas.lidar.end_time) {
+    lidar_buffer_.pop_front();
+    lidar_pushed_ = false;
+    return false;
+  }
+
+  if (last_timestamp_imu_ < meas.lidar.end_time)
+    return false;
+
+  double imu_time = imu_buffer_.front().secs;
+  meas.imu.clear();
+  while (!imu_buffer_.empty() && imu_time < meas.lidar.end_time) {
+    imu_time = imu_buffer_.front().secs;
+    if (imu_time > meas.lidar.end_time) break;
+    meas.imu.push_back(imu_buffer_.front());
+    imu_buffer_.pop_front();
+  }
+
+  last_src = meas.lidar.end_time;
+  lidar_buffer_.pop_front();
+  lidar_pushed_ = false;
+  return true;
+}
+
+
 void ROSWrapperDual::setupDualParams()
 {
   // ---- rear-to-front extrinsic ----

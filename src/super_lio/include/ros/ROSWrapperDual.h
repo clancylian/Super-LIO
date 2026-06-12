@@ -15,6 +15,7 @@ public:
   explicit ROSWrapperDual(const rclcpp::NodeOptions& options = rclcpp::NodeOptions());
   ~ROSWrapperDual() = default;
   using Ptr = std::shared_ptr<ROSWrapperDual>;
+  bool sync_measure(MeasureGroup& meas) override;
 
 private:
   // ---- overrides ----
@@ -34,6 +35,9 @@ private:
 
   // rear → front transform
   BASIC::SE3 T_rear_to_front_;
+
+  // per-source last lidar timestamp
+  double last_timestamp_lidar_rear_ = -1.0;
 
   // rear IMU history for temporal fusion
   std::deque<IMUData> rear_imu_history_;

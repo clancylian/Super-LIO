@@ -650,167 +650,185 @@ void SuperLIO::ProcessCaceMap(){
   }
 
   std::string pcd_folder = save_map_dir + "/PCD";
-  
-  // When dynamic removal is enabled, merge filtered_ files; otherwise merge original scans_
-  std::string scan_prefix = g_dynamic_removal_enable ? 
-      ("filtered_" + g_pcd_prefix + "scans_") : (g_pcd_prefix + "scans_");
-  
-  std::string output_map_name;
-  if(g_dynamic_removal_enable){
+
+  // Lambda to merge PCD files matching a given prefix into an output file
+  auto mergePcdFiles = [&](const std::string& scan_prefix, const std::string& output_map_name) {
+    // Collect and sort matching PCD files
+    std::vector<std::string> pcd_files;
+    for (const auto& entry : fs::directory_iterator(pcd_folder)) {
+      if (entry.path().extension() == ".pcd" &&
+          entry.path().filename().string().find(scan_prefix) != std::string::npos) {
+        pcd_files.push_back(entry.path().string());
+      }
+    }
+    std::sort(pcd_files.begin(), pcd_files.end());
+
+    if (pcd_files.empty()) {
+      LOG(WARNING) << RED << " ---> No matching PCD fragments found with prefix '" << scan_prefix << "'" << RESET;
+      return;
+    }
+
+    LOG(INFO) << YELLOW << " ---> Merging " << pcd_files.size() << " PCD fragments in: " << pcd_folder << RESET;
+
+    if (!g_if_filter) {
+      // Streaming binary merge: read header to count total points, then concatenate binary data
+      // This avoids loading all point clouds into memory at once
+      LOG(INFO) << YELLOW << " ---> Streaming merge (no downsample) ..." << RESET;
+
+      // Step 1: Count total points and extract header template from first file
+      size_t total_points = 0;
+      std::string header_template;
+      bool first = true;
+
+      for (const auto& file : pcd_files) {
+        pcl::PCLPointCloud2 cloud2;
+        pcl::PCDReader reader;
+        if (reader.readHeader(file, cloud2) == 0) {
+          total_points += cloud2.width * cloud2.height;
+          if (first) {
+            // Read the ASCII header from the first file to use as template
+            std::ifstream ifs(file, std::ios::binary);
+            std::string line;
+            while (std::getline(ifs, line)) {
+              header_template += line + "\n";
+              if (line.find("DATA") == 0) break;
+            }
+            first = false;
+          }
+        } else {
+          LOG(WARNING) << RED << " ---> Failed to read header: " << file << RESET;
+        }
+      }
+
+      if (total_points == 0) {
+        LOG(WARNING) << RED << " ---> No points to merge" << RESET;
+        return;
+      }
+
+      // Step 2: Write output file header with correct total point count
+      std::string updated_header;
+      std::istringstream header_stream(header_template);
+      std::string line;
+      while (std::getline(header_stream, line)) {
+        if (line.find("POINTS ") == 0) {
+          updated_header += "POINTS " + std::to_string(total_points) + "\n";
+        } else if (line.find("WIDTH ") == 0) {
+          updated_header += "WIDTH " + std::to_string(total_points) + "\n";
+        } else {
+          updated_header += line + "\n";
+        }
+      }
+
+      std::ofstream ofs(output_map_name, std::ios::binary);
+      if (!ofs.is_open()) {
+        LOG(ERROR) << RED << " ---> Failed to open output file: " << output_map_name << RESET;
+        return;
+      }
+      ofs << updated_header;
+
+      // Step 3: Append binary data from each file without loading entire cloud into memory
+      for (const auto& file : pcd_files) {
+        std::ifstream ifs(file, std::ios::binary);
+        if (!ifs.is_open()) {
+          LOG(WARNING) << RED << " ---> Failed to open: " << file << RESET;
+          continue;
+        }
+
+        // Seek to end of header ("DATA binary\n" or "DATA ascii\n")
+        std::string data_line;
+        while (std::getline(ifs, data_line)) {
+          if (data_line.find("DATA") == 0) break;
+        }
+        size_t data_offset = static_cast<size_t>(ifs.tellg());
+
+        // Get binary data size
+        ifs.seekg(0, std::ios::end);
+        size_t file_size = static_cast<size_t>(ifs.tellg());
+        if (file_size <= data_offset) continue;
+
+        size_t binary_size = file_size - data_offset;
+
+        // Read and write binary data in chunks
+        ifs.seekg(static_cast<std::streamoff>(data_offset), std::ios::beg);
+        const size_t chunk_size = 1024 * 1024; // 1MB chunks
+        std::vector<char> buffer(chunk_size);
+        size_t remaining = binary_size;
+        while (remaining > 0) {
+          size_t to_read = std::min(chunk_size, remaining);
+          ifs.read(buffer.data(), to_read);
+          ofs.write(buffer.data(), to_read);
+          remaining -= to_read;
+        }
+      }
+      ofs.close();
+
+      LOG(INFO) << GREEN << " ---> Streaming merge done: " << total_points << " points" << RESET;
+    } else {
+      // With downsample: load one-by-one into merged_map (voxel grid needs all points)
+      LOG(INFO) << YELLOW << " ---> Merge with downsampling ..." << RESET;
+
+      PointCloudType::Ptr merged_map(new PointCloudType());
+      int count = 0;
+      for (const auto& file : pcd_files) {
+        PointCloudType::Ptr tmp_cloud(new PointCloudType());
+        if (pcl::io::loadPCDFile<PointType>(file, *tmp_cloud) == 0) {
+          *merged_map += *tmp_cloud;
+          count++;
+        } else {
+          LOG(WARNING) << RED << " ---> Failed to load: " << file << RESET;
+        }
+      }
+
+      LOG(INFO) << YELLOW << " ---> Total merged fragments: " << count << RESET;
+
+      PointCloudType filtered_map;
+      pcl::VoxelGrid<PointType> voxel_filter;
+      voxel_filter.setLeafSize(g_map_ds_size, g_map_ds_size, g_map_ds_size);
+      voxel_filter.setInputCloud(merged_map);
+      voxel_filter.filter(filtered_map);
+
+      if (filtered_map.size() > 0) {
+        filtered_map.width = filtered_map.size();
+        filtered_map.height = 1;
+        filtered_map.is_dense = false;
+      }
+      pcl::io::savePCDFileBinary(output_map_name, filtered_map);
+      LOG(INFO) << GREEN << " ---> Final map size: " << filtered_map.size() << RESET;
+    }
+
+    LOG(INFO) << GREEN << " ---> Final map saved to: " << output_map_name << RESET;
+  };
+
+  // Build the output name with _ori suffix
+  std::string output_map_name_ori;
+  {
     size_t dot_pos = g_map_name.find_last_of('.');
     if(dot_pos != std::string::npos){
-      output_map_name = save_map_dir + "/" + g_map_name.substr(0, dot_pos) + "_ori" + g_map_name.substr(dot_pos);
+      output_map_name_ori = save_map_dir + "/" + g_map_name.substr(0, dot_pos) + "_ori" + g_map_name.substr(dot_pos);
     } else {
-      output_map_name = save_map_dir + "/" + g_map_name + "_ori";
+      output_map_name_ori = save_map_dir + "/" + g_map_name + "_ori";
     }
+  }
+
+  if(g_dynamic_removal_enable){
+    // 1) Merge original scans → *_ori.pcd
+    mergePcdFiles(g_pcd_prefix + "scans_", output_map_name_ori);
+
+    // 2) Merge filtered scans → filtered_*_ori.pcd
+    std::string filtered_output;
+    {
+      size_t dot_pos = g_map_name.find_last_of('.');
+      if(dot_pos != std::string::npos){
+        filtered_output = save_map_dir + "/filtered_" + g_map_name.substr(0, dot_pos) + "_ori" + g_map_name.substr(dot_pos);
+      } else {
+        filtered_output = save_map_dir + "/filtered_" + g_map_name + "_ori";
+      }
+    }
+    mergePcdFiles("filtered_" + g_pcd_prefix + "scans_", filtered_output);
   } else {
-    output_map_name = save_map_dir + "/" + g_map_name;
+    // No dynamic removal: merge original scans only
+    mergePcdFiles(g_pcd_prefix + "scans_", save_map_dir + "/" + g_map_name);
   }
-
-  // Collect and sort matching PCD files
-  std::vector<std::string> pcd_files;
-  for (const auto& entry : fs::directory_iterator(pcd_folder)) {
-    if (entry.path().extension() == ".pcd" &&
-        entry.path().filename().string().find(scan_prefix) != std::string::npos) {
-      pcd_files.push_back(entry.path().string());
-    }
-  }
-  std::sort(pcd_files.begin(), pcd_files.end());
-
-  if (pcd_files.empty()) {
-    LOG(WARNING) << RED << " ---> No matching PCD fragments found with prefix '" << scan_prefix << "'" << RESET;
-    return;
-  }
-
-  LOG(INFO) << YELLOW << " ---> Merging " << pcd_files.size() << " PCD fragments in: " << pcd_folder << RESET;
-
-  if (!g_if_filter) {
-    // Streaming binary merge: read header to count total points, then concatenate binary data
-    // This avoids loading all point clouds into memory at once
-    LOG(INFO) << YELLOW << " ---> Streaming merge (no downsample) ..." << RESET;
-
-    // Step 1: Count total points and extract header template from first file
-    size_t total_points = 0;
-    std::string header_template;
-    bool first = true;
-
-    for (const auto& file : pcd_files) {
-      pcl::PCLPointCloud2 cloud2;
-      pcl::PCDReader reader;
-      if (reader.readHeader(file, cloud2) == 0) {
-        total_points += cloud2.width * cloud2.height;
-        if (first) {
-          // Read the ASCII header from the first file to use as template
-          std::ifstream ifs(file, std::ios::binary);
-          std::string line;
-          while (std::getline(ifs, line)) {
-            header_template += line + "\n";
-            if (line.find("DATA") == 0) break;
-          }
-          first = false;
-        }
-      } else {
-        LOG(WARNING) << RED << " ---> Failed to read header: " << file << RESET;
-      }
-    }
-
-    if (total_points == 0) {
-      LOG(WARNING) << RED << " ---> No points to merge" << RESET;
-      return;
-    }
-
-    // Step 2: Write output file header with correct total point count
-    std::string updated_header;
-    std::istringstream header_stream(header_template);
-    std::string line;
-    while (std::getline(header_stream, line)) {
-      if (line.find("POINTS ") == 0) {
-        updated_header += "POINTS " + std::to_string(total_points) + "\n";
-      } else if (line.find("WIDTH ") == 0) {
-        updated_header += "WIDTH " + std::to_string(total_points) + "\n";
-      } else {
-        updated_header += line + "\n";
-      }
-    }
-
-    std::ofstream ofs(output_map_name, std::ios::binary);
-    if (!ofs.is_open()) {
-      LOG(ERROR) << RED << " ---> Failed to open output file: " << output_map_name << RESET;
-      return;
-    }
-    ofs << updated_header;
-
-    // Step 3: Append binary data from each file without loading entire cloud into memory
-    for (const auto& file : pcd_files) {
-      std::ifstream ifs(file, std::ios::binary);
-      if (!ifs.is_open()) {
-        LOG(WARNING) << RED << " ---> Failed to open: " << file << RESET;
-        continue;
-      }
-
-      // Seek to end of header ("DATA binary\n" or "DATA ascii\n")
-      std::string data_line;
-      while (std::getline(ifs, data_line)) {
-        if (data_line.find("DATA") == 0) break;
-      }
-      size_t data_offset = static_cast<size_t>(ifs.tellg());
-
-      // Get binary data size
-      ifs.seekg(0, std::ios::end);
-      size_t file_size = static_cast<size_t>(ifs.tellg());
-      if (file_size <= data_offset) continue;
-
-      size_t binary_size = file_size - data_offset;
-
-      // Read and write binary data in chunks
-      ifs.seekg(static_cast<std::streamoff>(data_offset), std::ios::beg);
-      const size_t chunk_size = 1024 * 1024; // 1MB chunks
-      std::vector<char> buffer(chunk_size);
-      size_t remaining = binary_size;
-      while (remaining > 0) {
-        size_t to_read = std::min(chunk_size, remaining);
-        ifs.read(buffer.data(), to_read);
-        ofs.write(buffer.data(), to_read);
-        remaining -= to_read;
-      }
-    }
-    ofs.close();
-
-    LOG(INFO) << GREEN << " ---> Streaming merge done: " << total_points << " points" << RESET;
-  } else {
-    // With downsample: load one-by-one into merged_map (voxel grid needs all points)
-    LOG(INFO) << YELLOW << " ---> Merge with downsampling ..." << RESET;
-
-    PointCloudType::Ptr merged_map(new PointCloudType());
-    int count = 0;
-    for (const auto& file : pcd_files) {
-      PointCloudType::Ptr tmp_cloud(new PointCloudType());
-      if (pcl::io::loadPCDFile<PointType>(file, *tmp_cloud) == 0) {
-        *merged_map += *tmp_cloud;
-        count++;
-      } else {
-        LOG(WARNING) << RED << " ---> Failed to load: " << file << RESET;
-      }
-    }
-
-    LOG(INFO) << YELLOW << " ---> Total merged fragments: " << count << RESET;
-
-    PointCloudType filtered_map;
-    pcl::VoxelGrid<PointType> voxel_filter;
-    voxel_filter.setLeafSize(g_map_ds_size, g_map_ds_size, g_map_ds_size);
-    voxel_filter.setInputCloud(merged_map);
-    voxel_filter.filter(filtered_map);
-
-    if (filtered_map.size() > 0) {
-      filtered_map.width = filtered_map.size();
-      filtered_map.height = 1;
-      filtered_map.is_dense = false;
-    }
-    pcl::io::savePCDFileBinary(output_map_name, filtered_map);
-    LOG(INFO) << GREEN << " ---> Final map size: " << filtered_map.size() << RESET;
-  }
-
-  LOG(INFO) << GREEN << " ---> Final map saved to: " << output_map_name << RESET;
 }
 
 

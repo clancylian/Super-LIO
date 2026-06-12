@@ -1262,28 +1262,49 @@ void SuperLIO::Observe(){
     }
     consecutive_skip_count_ = 0;
 
-    // Degeneracy detection: use relative threshold (min/max eigenvalue ratio).
-    // When min_eig * threshold < max_eig, the Hessian is ill-conditioned
-    // (e.g. corridor axis lacks observability). Add scaled Tikhonov
-    // regularization to prevent divergence in the degenerate direction.
+    // Degeneracy detection: eigen-space truncation (projection).
+    // Instead of blind Tikhonov regularization, we decompose the Hessian
+    // into its eigen-basis and zero out degenerate directions, letting
+    // IMU preintegration take full control of those axes.
     if(g_degeneracy_detect_en){
       Eigen::SelfAdjointEigenSolver<M6d> eig(sum_HTVH);
-      double min_eig = eig.eigenvalues()(0);
-      double max_eig = eig.eigenvalues()(5);
+      V6d eigenvalues = eig.eigenvalues();
+      M6d eigenvectors = eig.eigenvectors();
+
+      double min_eig = eigenvalues(0);
+      double max_eig = eigenvalues(5);
       double cond_num = (min_eig > 1e-12) ? max_eig / min_eig : 1e12;
-      // Relative check: degeneracy when condition number > threshold
+
       if(cond_num > g_degeneracy_threshold){
-        // Scale regularization strength to match Hessian magnitude
-        double hessian_scale = sum_HTVH.trace() / 6.0;
-        double reg = g_tikhonov_lambda * hessian_scale;
-        sum_HTVH += reg * M6d::Identity();
+        M6d H_V_inv = M6d::Zero();
+        int degenerate_axes_count = 0;
+
+        for(int i = 0; i < 6; ++i){
+          if(eigenvalues(i) < max_eig / g_degeneracy_threshold){
+            // Degenerate direction: truncate (project out) the LiDAR
+            // observation so that IMU preintegration drives this axis.
+            H_V_inv(i, i) = 0.0;
+            degenerate_axes_count++;
+          } else {
+            // Healthy direction: retain high-precision LIO update.
+            H_V_inv(i, i) = 1.0 / eigenvalues(i);
+          }
+        }
+
+        // Reconstruct the modified Hessian from the truncated eigen-space.
+        M6d HTVH_pseudo_inv = eigenvectors * H_V_inv * eigenvectors.transpose();
+
+        // Mild Tikhonov damping for numerical safety only.
+        sum_HTVH = HTVH_pseudo_inv.inverse()
+                   + 1e-5 * sum_HTVH.trace() / 6.0 * M6d::Identity();
+
         static auto last_degen_log = std::chrono::steady_clock::now();
         auto now_degen = std::chrono::steady_clock::now();
         if(std::chrono::duration<double>(now_degen - last_degen_log).count() > 30.0){
-          LOG(WARNING) << "[Degeneracy] REGULARIZED cond=" << cond_num
-                       << " reg_strength=" << reg
+          LOG(WARNING) << "[Degeneracy] TRUNCATED cond=" << cond_num
+                       << " deg_axes=" << degenerate_axes_count
                        << " effect_pts=" << total_valid
-                       << " eig=[ " << eig.eigenvalues().transpose() << " ]";
+                       << " eig=[ " << eigenvalues.transpose() << " ]";
           last_degen_log = now_degen;
         }
       }

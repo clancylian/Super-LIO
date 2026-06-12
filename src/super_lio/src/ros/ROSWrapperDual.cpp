@@ -40,17 +40,25 @@ bool ROSWrapperDual::sync_measure(MeasureGroup& meas)
     return false;
   }
 
+  // Ensure IMU data covers the lidar scan window (need samples before start time
+  // for proper interpolation of first points during Propagation_Undistort)
   if (last_timestamp_imu_ < meas.lidar.end_time)
     return false;
 
-  double imu_time = imu_buffer_.front().secs;
+  // Copy IMU data without popping — both lidar sources share the same buffer.
+  // Popping here would starve the other source of its IMU data.
   meas.imu.clear();
-  while (!imu_buffer_.empty() && imu_time < meas.lidar.end_time) {
-    imu_time = imu_buffer_.front().secs;
-    if (imu_time > meas.lidar.end_time) break;
-    meas.imu.push_back(imu_buffer_.front());
-    imu_buffer_.pop_front();
+  double window_start = meas.lidar.start_time - 0.02;
+  for (auto& imu : imu_buffer_) {
+    if (imu.secs > meas.lidar.end_time) break;
+    if (imu.secs < window_start) continue;
+    meas.imu.push_back(imu);
   }
+
+  // Cleanup: remove entries older than both lidar last timestamps
+  double oldest = std::min(last_timestamp_lidar_, last_timestamp_lidar_rear_) - 0.5;
+  while (!imu_buffer_.empty() && imu_buffer_.front().secs < oldest)
+    imu_buffer_.pop_front();
 
   last_src = meas.lidar.end_time;
   lidar_buffer_.pop_front();

@@ -969,6 +969,20 @@ inline double get_cpu_time_seconds() {
 
 void SuperLIO::Propagation_Undistort(){
   propagate_states_.clear();
+
+  // For rear lidar: the ESKF may have advanced beyond the scan start due to
+  // the immediately-preceding front-lidar Observe(). Without rewinding,
+  // ESKF::Predict would reject all IMUs before the front-scan end_time,
+  // leaving propagate_states_ with a single entry and causing missing sectors.
+  bool is_rear = (current_lidar_frame_ == "__rear__");
+  auto saved_state = kf_->GetSysState();
+  if(is_rear && !measures_.imu.empty()){
+    auto rewind_state = saved_state;
+    rewind_state.timestamp = measures_.imu.front().secs - 0.001;
+    if(rewind_state.timestamp < 0.0) rewind_state.timestamp = 0.0;
+    kf_->SetX(rewind_state);
+  }
+
   propagate_states_.emplace_back(kf_->GetDynamicState());
   kf_->SetObsTime(measures_.lidar.end_time);
   for (auto &imu : measures_.imu) {
@@ -977,6 +991,12 @@ void SuperLIO::Propagation_Undistort(){
   }
 
   const SE3 T_end = kf_->GetSE3();
+
+  // Restore ESKF so Observe/UpdateMap start from the correct pre-frame state
+  if(is_rear){
+    kf_->SetX(saved_state);
+  }
+
   const M3  R_inv = T_end.R_.transpose();
   const V3  T_end_t = T_end.t_;
   const double start_time = measures_.lidar.start_time;

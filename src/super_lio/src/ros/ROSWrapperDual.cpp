@@ -92,9 +92,9 @@ void ROSWrapperDual::setupDualIO()
       .durability_volatile();
 
   pub_cloud_world_rear_ = create_publisher<sensor_msgs::msg::PointCloud2>(
-      "/rear_lidar/cloud_world", pointcloud_qos);
+      "rear_lidar/cloud_world", pointcloud_qos);
   pub_cloud_body_rear_ = create_publisher<sensor_msgs::msg::PointCloud2>(
-      "/rear_lidar/body/cloud", pointcloud_qos);
+      "rear_lidar/body/cloud", pointcloud_qos);
 
   LOG(INFO) << GREEN << " ---> [Dual] Subscribed rear IMU: "
             << rear_imu_topic << RESET;

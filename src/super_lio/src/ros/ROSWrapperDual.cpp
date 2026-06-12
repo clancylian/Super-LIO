@@ -200,7 +200,9 @@ bool ROSWrapperDual::tryFuseWithRearIMU(double front_time,
 void ROSWrapperDual::imuHandler(const sensor_msgs::msg::Imu::SharedPtr msg)
 {
   IMUData data;
-  data.secs = this->now().seconds();
+  data.secs = g_use_local_timestamp
+              ? this->now().seconds()
+              : stampToSec(msg->header.stamp);
 
   V3 acc_raw(msg->linear_acceleration.x,
              msg->linear_acceleration.y,
@@ -408,7 +410,9 @@ void ROSWrapperDual::rearLidarHandler(const sensor_msgs::msg::PointCloud2::Share
     }
     lidar_data.pc.reset(new pcl::PointCloud<PointXTZIT>());
     lidar_data.pc->reserve(plsize / g_filter_rate + 1);
-    lidar_data.start_time = this->now().seconds();
+    lidar_data.start_time = g_use_local_timestamp
+                            ? this->now().seconds()
+                            : stampToSec(msg->header.stamp);
 
     double offset_time = 0.0;
 

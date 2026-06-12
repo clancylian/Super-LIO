@@ -160,6 +160,9 @@ namespace LI2Sup{
    /// Share IVox map between front and rear lidar in dual mode
    extern bool   g_share_ivox;
 
+   /// Use local (this->now()) timestamp instead of topic header timestamp
+   extern bool   g_use_local_timestamp;
+
 }
 
 #endif

@@ -133,4 +133,7 @@ namespace LI2Sup{
   /// Share IVox map in dual mode
   bool   g_share_ivox = true;
 
+  /// Use local timestamp instead of topic header timestamp
+  bool   g_use_local_timestamp = true;
+
 }

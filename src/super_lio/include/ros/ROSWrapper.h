@@ -61,6 +61,12 @@ inline builtin_interfaces::msg::Time toRosTime(double t_sec)
   return t;
 }
 
+inline double stampToSec(const builtin_interfaces::msg::Time& t)
+{
+  return static_cast<double>(t.sec) +
+         static_cast<double>(t.nanosec) * 1e-9;
+}
+
 #ifdef LIVOX_SUPPORT
 void livox2pcl(const livox_ros_driver2::msg::CustomMsg::SharedPtr& msg, BASIC::CloudPtr& point_cloud);
 #endif

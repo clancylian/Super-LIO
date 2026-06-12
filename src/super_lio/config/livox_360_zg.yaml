@@ -186,6 +186,12 @@
     # 自适应权重衰减距离Sigma(米)，越大则远端点权重衰减越慢
     lio.adaptive_weight.sigma: 30.0
 
+    # ======================== 时间戳模式 ========================
+    # 是否使用本机时间戳替代话题原始时间戳。true: 用 this->now() 覆盖IMU/LiDAR时间戳;
+    # false: 保留话题header中的原始时间戳。在线实时运行时建议true(避免时钟不同步)，
+    # 回放rosbag时建议false(保证时间基准一致)
+    lio.ros.use_local_timestamp: true
+
         # IMU订阅的QoS可靠性设置。true: reliable(可靠传输); false: best_effort(尽力传输)
     # reliable: 保证数据完整性,适合关键数据; best_effort: 低延迟,适合高频传感器数据
     lio.ros.imu_qos_reliable: true

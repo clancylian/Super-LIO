@@ -88,6 +88,16 @@ void LoadParamFromRos(rclcpp::Node& node)
   node.declare_parameter<bool>("lio.sensor.enable_filter_offset", true);
   node.get_parameter("lio.sensor.enable_filter_offset", g_enable_filter_offset);
 
+  node.declare_parameter<int>("lio.sensor.full_column_interval", 0);
+  node.get_parameter("lio.sensor.full_column_interval", g_full_column_interval);
+
+  node.declare_parameter<int>("lio.sensor.lidar_channels", 96);
+  node.get_parameter("lio.sensor.lidar_channels", g_lidar_channels);
+
+  LOG(INFO) << GREEN << " ---> [Param] full_column_interval: "
+            << g_full_column_interval << ", lidar_channels: "
+            << g_lidar_channels << RESET;
+
   node.declare_parameter<bool>("lio.sensor.enable_downsample", false);
   node.get_parameter("lio.sensor.enable_downsample", g_enable_downsample);
 
@@ -929,7 +939,7 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
       pcl::fromROSMsg(*msg, pl_orig);
       int plsize = pl_orig.size();
       if (plsize == 0) return;
-      lidar_data.pc->reserve(plsize / g_filter_rate + 1);
+      lidar_data.pc->reserve(plsize / g_filter_rate + g_lidar_channels + 1);
 
       double min_time = std::numeric_limits<double>::max();
       double max_time = std::numeric_limits<double>::lowest();
@@ -942,7 +952,21 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
                             ? this->now().seconds()
                             : stampToSec(msg->header.stamp);
 
-      for (int i = g_filter_offset; i < plsize; i += g_filter_rate) {
+      // full_column_interval: 每N列保留完整一列，其余列按filter_rate降采样
+      const bool use_full_col = (g_full_column_interval > 0 && g_lidar_channels > 0);
+      static int full_col_offset = 0;
+
+      for (int i = 0; i < plsize; ++i) {
+        // 判断当前点是否属于"完整保留列"
+        bool keep_full = false;
+        if (use_full_col) {
+          int col = i / g_lidar_channels;
+          if (col % g_full_column_interval == full_col_offset) {
+            keep_full = true;
+          }
+        }
+        if (!keep_full && (i - g_filter_offset) % g_filter_rate != 0) continue;
+
         auto& pt = pl_orig.points[i];
         float ros_x = pt.x;
         float ros_y = pt.y;
@@ -953,12 +977,16 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
         lidar_data.pc->emplace_back(
             ros_x, ros_y, ros_z, pt.intensity, offset_time);
       }
-      // symmetric oscillation around 0
+      // symmetric oscillation for filter_offset
       if(g_filter_rate > 1 && g_enable_filter_offset) {
         static int g_filter_osc = 0;
         int half = g_filter_osc / 2;
         g_filter_offset = (g_filter_osc & 1) ? (g_filter_rate - 1 - half) : half;
         g_filter_osc = (g_filter_osc + 1) % g_filter_rate;
+      }
+      // full_column_offset oscillation
+      if (use_full_col && g_enable_filter_offset) {
+        full_col_offset = (full_col_offset + 1) % g_full_column_interval;
       }
       lidar_data.end_time = lidar_data.start_time + (max_time - min_time);
     } else {
@@ -966,12 +994,24 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
       pcl::fromROSMsg(*msg, pl_orig);
       int plsize = pl_orig.size();
       if (plsize == 0) return;
-      lidar_data.pc->reserve(plsize / g_filter_rate + 1);
+      lidar_data.pc->reserve(plsize / g_filter_rate + g_lidar_channels + 1);
       lidar_data.start_time = g_use_local_timestamp
                             ? this->now().seconds()
                             : stampToSec(msg->header.stamp);
 
-      for (int i = g_filter_offset; i < plsize; i += g_filter_rate) {
+      const bool use_full_col = (g_full_column_interval > 0 && g_lidar_channels > 0);
+      static int full_col_offset = 0;
+
+      for (int i = 0; i < plsize; ++i) {
+        bool keep_full = false;
+        if (use_full_col) {
+          int col = i / g_lidar_channels;
+          if (col % g_full_column_interval == full_col_offset) {
+            keep_full = true;
+          }
+        }
+        if (!keep_full && (i - g_filter_offset) % g_filter_rate != 0) continue;
+
         auto& pt = pl_orig.points[i];
         float ros_x = pt.x;
         float ros_y = pt.y;
@@ -981,12 +1021,15 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
         lidar_data.pc->emplace_back(
             ros_x, ros_y, ros_z, pt.intensity, 0.0);
       }
-      // symmetric oscillation around 0
+      // symmetric oscillation for filter_offset
       if(g_filter_rate > 1 && g_enable_filter_offset) {
         static int g_filter_osc = 0;
         int half = g_filter_osc / 2;
         g_filter_offset = (g_filter_osc & 1) ? (g_filter_rate - 1 - half) : half;
         g_filter_osc = (g_filter_osc + 1) % g_filter_rate;
+      }
+      if (use_full_col && g_enable_filter_offset) {
+        full_col_offset = (full_col_offset + 1) % g_full_column_interval;
       }
       lidar_data.end_time = lidar_data.start_time;
     }

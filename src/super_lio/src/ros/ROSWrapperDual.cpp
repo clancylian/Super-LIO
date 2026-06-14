@@ -409,14 +409,27 @@ void ROSWrapperDual::rearLidarHandler(const sensor_msgs::msg::PointCloud2::Share
       if (ts > max_time) max_time = ts;
     }
     lidar_data.pc.reset(new pcl::PointCloud<PointXTZIT>());
-    lidar_data.pc->reserve(plsize / g_filter_rate + 1);
+    lidar_data.pc->reserve(plsize / g_filter_rate + g_lidar_channels + 1);
     lidar_data.start_time = g_use_local_timestamp
                             ? this->now().seconds()
                             : stampToSec(msg->header.stamp);
 
     double offset_time = 0.0;
 
-    for (int i = 0; i < plsize; i += g_filter_rate) {
+    // full_column_interval: 每N列保留完整一列，其余列按filter_rate降采样
+    const bool use_full_col = (g_full_column_interval > 0 && g_lidar_channels > 0);
+    static int full_col_offset = 0;
+
+    for (int i = 0; i < plsize; ++i) {
+      bool keep_full = false;
+      if (use_full_col) {
+        int col = i / g_lidar_channels;
+        if (col % g_full_column_interval == full_col_offset) {
+          keep_full = true;
+        }
+      }
+      if (!keep_full && i % g_filter_rate != 0) continue;
+
       auto& pt = pl_orig.points[i];
       float ros_x = pt.x;
       float ros_y = pt.y;
@@ -430,6 +443,10 @@ void ROSWrapperDual::rearLidarHandler(const sensor_msgs::msg::PointCloud2::Share
       lidar_data.pc->emplace_back(
           ros_x, ros_y, ros_z,
           pt.intensity, offset_time);
+    }
+
+    if (use_full_col && g_enable_filter_offset) {
+      full_col_offset = (full_col_offset + 1) % g_full_column_interval;
     }
 
     lidar_data.end_time = lidar_data.start_time + offset_time;

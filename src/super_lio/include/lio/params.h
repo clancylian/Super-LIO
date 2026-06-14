@@ -52,6 +52,8 @@ namespace LI2Sup{
   extern int   g_filter_rate;
   extern int   g_filter_offset; // 余数偏移，用于下次采样的起始点
   extern bool  g_enable_filter_offset;
+  extern int   g_full_column_interval; // 每隔多少列保留完整一列（0=禁用），用于多线雷达保纵向信息
+  extern int   g_lidar_channels;       // 多线雷达线数（如96），用于full_column_interval计算列索引
   extern bool  g_enable_downsample;
   extern float g_voxel_fliter_size;
   extern bool  g_intensity_filter_en;

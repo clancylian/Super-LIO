@@ -35,6 +35,8 @@ namespace LI2Sup{
   int    g_filter_rate;
   int    g_filter_offset = 0;
   bool   g_enable_filter_offset = true;
+  int    g_full_column_interval = 0;  // 0 = disabled
+  int    g_lidar_channels = 96;
   bool   g_enable_downsample;
   float  g_voxel_fliter_size;
   bool   g_intensity_filter_en = false;

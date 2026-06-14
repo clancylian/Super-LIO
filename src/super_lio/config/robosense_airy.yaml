@@ -19,6 +19,15 @@
     lio.sensor.blind: 0.1
     lio.sensor.maxrange: 150.0
     lio.sensor.filter_rate: 4
+    # 每隔多少列保留完整一列（0=禁用）。用于多线雷达：每N列中保留一列的全部通道点，
+    # 其余列按filter_rate降采样，避免单方向降采样丢失纵向信息。
+    # 受enable_filter_offset影响：开启后完整列位置逐帧偏移，实现均匀覆盖。
+    # 例：96线720列，filter_rate=4，full_column_interval=4 → 每4列保留完整96点，
+    # 其余3列每4个点取1个，兼顾纵向完整性和计算效率
+    lio.sensor.full_column_interval: 4
+    # 多线雷达线数（通道数），用于full_column_interval计算列索引。
+    # Airy=96, Hesai16=16, Velo16=16, Velo32=32, Ouster=128 等
+    lio.sensor.lidar_channels: 96
     lio.sensor.enable_downsample: true
     lio.sensor.voxel_fliter_size: 0.25
     lio.sensor.intensity_filter_en: false

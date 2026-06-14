@@ -56,9 +56,12 @@
     # 最大有效距离(米)，大于此距离的点被剔除，用于去除远距离噪声点
     lio.sensor.maxrange: 100.0
     # 点云采样间隔，每隔N个点取1个。1=不降采样; 3=每3个点取1个，减少计算量
-    lio.sensor.filter_rate: 3
-    # 是否启用filter_rate的对称震荡offset，false则每帧固定取同一子集（可能导致退化场景漂移）
-    lio.sensor.enable_filter_offset: false
+    # IMPORTANT: 固态雷达Z轴朝前安装时，filter_rate>1会导致正前方空间盲区
+    # 建议设为1，完全依赖体素滤波(VoxelGridFilter)进行空间均匀降采样
+    lio.sensor.filter_rate: 1
+    # 是否启用filter_rate的对称震荡offset
+    # 当filter_rate>1时必须开启，否则每帧取同一子集导致退化场景漂移
+    lio.sensor.enable_filter_offset: true
     # 是否对去畸变后的点云进行体素滤波降采样
     lio.sensor.enable_downsample: true
     # 点云体素滤波的体素大小(米)，值越大点云越稀疏，计算越快
@@ -74,8 +77,10 @@
     #   1 = 内置IMU（如Livox Mid-360内置IMU）
     lio.sensor.imu_type: 1
     # IMU加速度计噪声标准差(m/s²/√Hz)，值越大对加速度计信任越低
+    # 内置IMU典型值0.01~0.05，当前0.1偏大，走廊退化时IMU接管能力不足
     lio.sensor.imu_na: 0.1
     # IMU陀螺仪噪声标准差(rad/s/√Hz)，值越大对陀螺仪信任越低
+    # 内置IMU典型值0.001~0.01，当前0.1偏大
     lio.sensor.imu_ng: 0.1
     # IMU加速度计零偏游走噪声(m/s³/√Hz)，控制零偏随时间的变化速率
     lio.sensor.imu_nba: 0.0001
@@ -202,6 +207,12 @@
     # ======================== 自适应观测权重 ========================
     lio.adaptive_weight.en: false
     lio.adaptive_weight.sigma: 30.0
+
+    # ======================== 观测参数 ========================
+    # 平面拟合距离门限(米)，点到拟合平面距离超过此值则判定拟合失败
+    # 原值0.1m过严，Z轴朝前安装的走廊场景中位姿微漂会导致正确点被拒绝
+    # 建议走廊场景放宽至0.15~0.2m
+    lio.observe.plane_fit_threshold: 0.15
     
     # IMU订阅的QoS可靠性设置。true: reliable(可靠传输); false: best_effort(尽力传输)
     # reliable: 保证数据完整性,适合关键数据; best_effort: 低延迟,适合高频传感器数据

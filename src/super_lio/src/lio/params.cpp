@@ -129,6 +129,9 @@ namespace LI2Sup{
   bool   g_adaptive_weight_en = true;
   double g_adaptive_weight_sigma = 30.0;
 
+  /// Plane fitting distance threshold
+  double g_plane_fit_threshold = 0.15;
+
   /// Bias reset after consecutive observe skips
   int    g_bias_reset_skip_threshold = 50;
 

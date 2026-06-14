@@ -156,6 +156,11 @@ namespace LI2Sup{
    extern bool   g_adaptive_weight_en;
    extern double g_adaptive_weight_sigma;
 
+   /// Plane fitting distance threshold (meters): points exceeding this distance
+   /// from the fitted plane are rejected. Default 0.15 (relaxed from 0.1 for
+   /// Z-forward LiDAR in corridors where pose drift causes valid points to exceed 0.1m)
+   extern double g_plane_fit_threshold;
+
    /// Max consecutive Observe-SKIP frames before resetting IMU bias
    extern int    g_bias_reset_skip_threshold;
 

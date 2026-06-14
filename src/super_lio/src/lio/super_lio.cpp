@@ -70,10 +70,12 @@ inline bool calc_plane_coeff(const int N, const std::array<V3, 5>& points, std::
   abcd[1] = normvec[1];
   abcd[2] = normvec[2];
   
+  // Plane fitting distance threshold: relaxed from 0.1m to g_plane_fit_threshold
+  // for Z-forward LiDAR in corridors where pose drift causes valid points to exceed 0.1m
   for (int i = 0; i < N; ++i) {
     const V3& p = points[i];
     auto dist = abcd[0] * p(0) + abcd[1] * p(1) + abcd[2] * p(2) + abcd[3];
-    if (std::abs(dist) > 0.1) return false;
+    if (std::abs(dist) > g_plane_fit_threshold) return false;
   }
   return true;
 }
@@ -1275,6 +1277,24 @@ void SuperLIO::Observe(){
       double max_eig = eigenvalues(5);
       double cond_num = (min_eig > 1e-12) ? max_eig / min_eig : 1e12;
 
+      // Always log eigenvector of minimum eigenvalue for degeneracy diagnosis
+      // Hessian order: [rotation(3), translation(3)]
+      {
+        V6d min_eigvec = eigenvectors.col(0);
+        static auto last_eigvec_log = std::chrono::steady_clock::now();
+        auto now_eigvec = std::chrono::steady_clock::now();
+        if(std::chrono::duration<double>(now_eigvec - last_eigvec_log).count() > 2.0){
+          LOG(WARNING) << "[Degeneracy-Diag] min_eig=" << min_eig
+                       << " max_eig=" << max_eig
+                       << " cond=" << cond_num
+                       << " effect_pts=" << total_valid
+                       << "\n  min_eigvec=[ " << min_eigvec.transpose() << " ]"
+                       << " (Rxyz, Txyz)"
+                       << "\n  all_eig=[ " << eigenvalues.transpose() << " ]";
+          last_eigvec_log = now_eigvec;
+        }
+      }
+
       if(cond_num > g_degeneracy_threshold){
         M6d H_V_inv = M6d::Zero();
         int degenerate_axes_count = 0;
@@ -1300,11 +1320,19 @@ void SuperLIO::Observe(){
 
         static auto last_degen_log = std::chrono::steady_clock::now();
         auto now_degen = std::chrono::steady_clock::now();
-        if(std::chrono::duration<double>(now_degen - last_degen_log).count() > 30.0){
+        if(std::chrono::duration<double>(now_degen - last_degen_log).count() > 2.0){
+          // Print eigenvectors of ALL degenerate directions
           LOG(WARNING) << "[Degeneracy] TRUNCATED cond=" << cond_num
                        << " deg_axes=" << degenerate_axes_count
                        << " effect_pts=" << total_valid
                        << " eig=[ " << eigenvalues.transpose() << " ]";
+          for(int i = 0; i < 6; ++i){
+            if(eigenvalues(i) < max_eig / g_degeneracy_threshold){
+              V6d deg_vec = eigenvectors.col(i);
+              LOG(WARNING) << "  deg_axis[" << i << "] eigval=" << eigenvalues(i)
+                           << " vec=[ " << deg_vec.transpose() << " ] (Rxyz,Txyz)";
+            }
+          }
           last_degen_log = now_degen;
         }
       }
@@ -1325,6 +1353,28 @@ void SuperLIO::Observe(){
 
     // LOG(INFO) << "effect_knn_num_: " << effect_knn_num_ << ", _effect_knn_num: " << _effect_knn_num;
     effect_knn_num_ = _effect_knn_num;
+
+    // Periodic log: effect_pts pipeline statistics
+    {
+      static auto last_stats_log = std::chrono::steady_clock::now();
+      auto now_stats = std::chrono::steady_clock::now();
+      if(std::chrono::duration<double>(now_stats - last_stats_log).count() > 5.0){
+        int knn_success = 0, plane_success = 0, final_effect = 0;
+        for(size_t i = 0; i < ptsize; ++i){
+          if(effect_knn_mask_[i]) knn_success++;
+          if(effect_mask_[i]) plane_success++;
+        }
+        for(size_t i = 0; i < effect_knn_num_; ++i){
+          if(effect_mask_[effect_knn_idxs_[i]]) final_effect++;
+        }
+        LOG(INFO) << "[Observe-Stats] total_ds=" << ptsize
+                  << " knn_ok=" << knn_success
+                  << " plane_ok=" << plane_success
+                  << " effect=" << final_effect
+                  << " skipped=" << (observe_skipped_ ? "Y" : "N");
+        last_stats_log = now_stats;
+      }
+    }
 
     iter_num++;
   });

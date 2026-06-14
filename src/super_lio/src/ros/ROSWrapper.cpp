@@ -409,6 +409,13 @@ void LoadParamFromRos(rclcpp::Node& node)
   LOG(INFO) << GREEN << " ---> [Param] adaptive_weight/sigma: "
             << g_adaptive_weight_sigma << RESET;
 
+  // ================= plane fit threshold =================
+  node.declare_parameter<double>("lio.observe.plane_fit_threshold", 0.15);
+  node.get_parameter("lio.observe.plane_fit_threshold", g_plane_fit_threshold);
+
+  LOG(INFO) << GREEN << " ---> [Param] observe/plane_fit_threshold: "
+            << g_plane_fit_threshold << RESET;
+
   // ================= lio only undistort mode =================
   node.declare_parameter<bool>("lio.lio_only_undistort", false);
   node.get_parameter("lio.lio_only_undistort", g_lio_only_undistort);

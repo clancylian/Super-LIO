@@ -6,7 +6,7 @@
 
     # ======================== 地图保存相关参数 ========================
     # 是否保存地图。true: 程序结束时保存点云地图; false: 不保存
-    lio.map.save_map: true
+    lio.map.save_map: false
     # 保存地图时是否进行体素滤波降采样。true: 使用体素滤波后保存; false: 保存原始点云
     lio.map.if_filter: false
     # 地图保存的根目录路径，支持绝对路径和相对路径
@@ -43,7 +43,7 @@
     # 最大有效距离(米)，大于此距离的点被剔除，用于去除远距离噪声点
     lio.sensor.maxrange: 100.0
     # 点云采样间隔，每隔N个点取1个。1=不降采样; 3=每3个点取1个，减少计算量
-    lio.sensor.filter_rate: 1
+    lio.sensor.filter_rate: 4
     # 每隔多少列保留完整一列（0=禁用），仅对多线结构雷达有效
     lio.sensor.full_column_interval: 0
     # 多线雷达线数（通道数），Livox非结构化雷达设0即可

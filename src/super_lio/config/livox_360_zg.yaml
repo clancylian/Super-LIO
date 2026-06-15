@@ -157,7 +157,7 @@
 
     # ======================== SC-PGO 离线处理参数 ========================
     # 是否启用 SC-PGO 兼容数据输出（输出 body-frame 扫描 + KITTI 位姿到 Scans/ 目录）
-    lio.sc_pgo.enable: true
+    lio.sc_pgo.enable: false
     # 关键帧平移距离阈值(米)，累计平移超过此值抽取一帧
     lio.sc_pgo.keyframe_gap: 5.0
     # 关键帧旋转角度阈值(度)，累计旋转超过此值抽取一帧
@@ -169,7 +169,7 @@
 
     # ======================== 快速TF模式 ========================
     # 是否在IMU频率下发布tf（world->imu, world->base_footprint），降低tf延迟
-    lio.fast_tf: false
+    lio.fast_tf: true
 
     # ======================== 退化检测与正则化 ========================
     # 是否启用观测Hessian退化检测，在病态方向上添加Tikhonov正则化
@@ -187,7 +187,7 @@
 
     # ======================== 自适应观测权重 ========================
     # 是否启用距离相关的观测权重（替代硬编码×1000）
-    lio.adaptive_weight.en: false
+    lio.adaptive_weight.en: true
     # 自适应权重衰减距离Sigma(米)，越大则远端点权重衰减越慢
     lio.adaptive_weight.sigma: 30.0
 

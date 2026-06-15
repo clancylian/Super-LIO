@@ -1316,7 +1316,7 @@ void SuperLIO::Observe(){
 
         // Mild Tikhonov damping for numerical safety only.
         sum_HTVH = HTVH_pseudo_inv.inverse()
-                   + 1e-5 * sum_HTVH.trace() / 6.0 * M6d::Identity();
+                   + g_tikhonov_lambda * sum_HTVH.trace() / 6.0 * M6d::Identity();
 
         static auto last_degen_log = std::chrono::steady_clock::now();
         auto now_degen = std::chrono::steady_clock::now();

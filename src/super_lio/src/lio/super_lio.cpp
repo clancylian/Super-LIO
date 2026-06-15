@@ -2,11 +2,6 @@
 #include "lio/super_lio.h"
 
 #include <sys/resource.h>
-#include <tbb/parallel_for.h>
-#include <tbb/blocked_range.h>
-#include <tbb/concurrent_vector.h>
-#include <tbb/enumerable_thread_specific.h>
-#include <tbb/info.h>
 #include <sched.h>
 #include <pthread.h>
 #include <cstring>
@@ -17,6 +12,34 @@
 
 
 using namespace BASIC;
+
+namespace {
+
+// Efficient R*t point cloud transform (avoids pcl::transformPointCloud 4x4 overhead)
+// For PointXYZI: only transforms x,y,z; copies intensity
+inline void transformPointCloudRt(const pcl::PointCloud<pcl::PointXYZI>& src,
+                                   pcl::PointCloud<pcl::PointXYZI>& dst,
+                                   const Eigen::Matrix3f& R,
+                                   const Eigen::Vector3f& t) {
+  dst.resize(src.size());
+  const float* r0 = R.data(); // row-major
+  const float* r1 = r0 + 3;
+  const float* r2 = r1 + 3;
+  for (size_t i = 0; i < src.size(); ++i) {
+    const auto& p = src.points[i];
+    auto& q = dst.points[i];
+    q.x = r0[0]*p.x + r0[1]*p.y + r0[2]*p.z + t[0];
+    q.y = r1[0]*p.x + r1[1]*p.y + r1[2]*p.z + t[1];
+    q.z = r2[0]*p.x + r2[1]*p.y + r2[2]*p.z + t[2];
+    q.intensity = p.intensity;
+  }
+  dst.header = src.header;
+  dst.width = dst.size();
+  dst.height = 1;
+  dst.is_dense = src.is_dense;
+}
+
+} // anonymous namespace
 
 namespace LI2Sup{
 
@@ -193,15 +216,8 @@ void SuperLIO::init(){
     }
   }
 
-  // Single-core mode: limit TBB to 1 thread so all parallel_for run serially
   if (g_single_core) {
-    tbb_control_.reset(new tbb::global_control(
-        tbb::global_control::max_allowed_parallelism, 1));
-    LOG(INFO) << YELLOW << " ---> [SuperLIO]: Single-core mode, TBB parallelism disabled" << RESET;
-  } else {
-    unsigned n = tbb::info::default_concurrency();
-    tbb_control_.reset(new tbb::global_control(
-        tbb::global_control::max_allowed_parallelism, n));
+    LOG(INFO) << YELLOW << " ---> [SuperLIO]: Single-core mode" << RESET;
   }
 
   LOG(INFO) << GREEN << " ---> [SuperLIO]: initialized." << RESET;
@@ -350,16 +366,11 @@ bool SuperLIO::map_init(){
 
   const SE3 transform = sys_init_pose_;
 
-  tbb::parallel_for(
-    tbb::blocked_range<size_t>(0, ptsize),
-    [&](const tbb::blocked_range<size_t>& r) {
-      for (size_t idx = r.begin(); idx < r.end(); ++idx) {
-        auto& point_pcl = measures_.lidar.pc->points[idx];
-        V3 point_body(point_pcl.x, point_pcl.y, point_pcl.z);
-        points_world_v3_[idx] = transform * point_body;
-      }
-    }
-  );
+  for (size_t idx = 0; idx < ptsize; ++idx) {
+    auto& point_pcl = measures_.lidar.pc->points[idx];
+    V3 point_body(point_pcl.x, point_pcl.y, point_pcl.z);
+    points_world_v3_[idx] = transform * point_body;
+  }
 
   ivox_->insert(points_world_v3_);
   kf_->SetLastObsTime(measures_.lidar.end_time);
@@ -425,10 +436,6 @@ void SuperLIO::stateProcess(){
 
 void SuperLIO::caceData(){
   if(!g_save_map) return;
-  auto state = kf_->GetNavState();
-  Eigen::Matrix4f transformation = Eigen::Matrix4f::Identity();
-  transformation.block<3, 3>(0, 0) = state.R.R_.cast<float>();
-  transformation.block<3, 1>(0, 3) = state.p.cast<float>();
 
   if(g_lio_only_undistort){
     if(g_if_filter){
@@ -437,10 +444,18 @@ void SuperLIO::caceData(){
       *world_pc_ = *scan_undistort_full_;
     }
   }else{
-    if(g_if_filter){
-      pcl::transformPointCloud(*ds_undistort_, *world_pc_, transformation);
+    // Reuse Output's already-transformed cloud if available
+    if(last_transformed_world_pc_ && !last_transformed_world_pc_->empty()){
+      *world_pc_ = *last_transformed_world_pc_;
     }else{
-      pcl::transformPointCloud(*scan_undistort_full_, *world_pc_, transformation);
+      auto state = kf_->GetNavState();
+      const Eigen::Matrix3f Rf = state.R.R_.cast<float>();
+      const Eigen::Vector3f tf = state.p.cast<float>();
+      if(g_if_filter){
+        transformPointCloudRt(*ds_undistort_, *world_pc_, Rf, tf);
+      }else{
+        transformPointCloudRt(*scan_undistort_full_, *world_pc_, Rf, tf);
+      }
     }
   }
 
@@ -955,52 +970,45 @@ void SuperLIO::Propagation_Undistort(){
   std::size_t ptsize = raw_pc->points.size();
   scan_undistort_full_->resize(ptsize); 
 
-  tbb::parallel_for(
-  tbb::blocked_range<size_t>(0, ptsize),
-  [&](const tbb::blocked_range<size_t>& r) {
-    M3 R_h, R_t; V3 p_h, v_h, acc_t, w_t;
-    for (size_t idx = r.begin(); idx < r.end(); ++idx) {  
-      auto& pt_full = scan_undistort_full_->points[idx];
-      const auto& pt = raw_pc->points[idx];
-      pt_full.intensity = pt.intensity;
-      double query_time = start_time + pt.offset_time;
-      if (query_time > propagate_states_.back().time) {
-        pt_full.x = pt.x;
-        pt_full.y = pt.y;
-        pt_full.z = pt.z;
-        continue;
-      }
-
-      // Binary search on time-ordered IMU states: O(log N) vs O(N) linear scan
-      auto it = std::lower_bound(
-          propagate_states_.cbegin(), propagate_states_.cend(), query_time,
-          [](const DynamicState& s, double t) { return s.time < t; });
-      decltype(it) match_iter, match_iter_n;
-      if (it == propagate_states_.cbegin()) {
-        match_iter = match_iter_n = it;
-      } else {
-        match_iter = std::prev(it);
-        match_iter_n = it;
-      }
-      double dt = match_iter_n->time - match_iter->time;
-      double tau = query_time - match_iter->time;
-      double s   = tau / dt;
-      R_h = match_iter->R;
-      R_t = match_iter_n->R;
-      p_h = match_iter->p;
-      v_h = match_iter->v;
-      acc_t = match_iter_n->a;
-      w_t = match_iter_n->w;
-      M3 R_i = Quat(R_h).slerp(s, Quat(R_t)).toRotationMatrix();
-      V3 p_i = p_h + v_h * tau + 0.5 * acc_t * tau * tau;
-      V3 t_ei = p_i - T_end_t;
-      V3 raw(pt.x, pt.y, pt.z);
-      V3 eigen_point = R_inv * (R_i * raw + t_ei);
-      pt_full.x = eigen_point[0];
-      pt_full.y = eigen_point[1];
-      pt_full.z = eigen_point[2];
+  for (size_t idx = 0; idx < ptsize; ++idx) {
+    auto& pt_full = scan_undistort_full_->points[idx];
+    const auto& pt = raw_pc->points[idx];
+    pt_full.intensity = pt.intensity;
+    double query_time = start_time + pt.offset_time;
+    if (query_time > propagate_states_.back().time) {
+      pt_full.x = pt.x;
+      pt_full.y = pt.y;
+      pt_full.z = pt.z;
+      continue;
     }
-  });
+
+    auto it = std::lower_bound(
+        propagate_states_.cbegin(), propagate_states_.cend(), query_time,
+        [](const DynamicState& s, double t) { return s.time < t; });
+    decltype(it) match_iter, match_iter_n;
+    if (it == propagate_states_.cbegin()) {
+      match_iter = match_iter_n = it;
+    } else {
+      match_iter = std::prev(it);
+      match_iter_n = it;
+    }
+    double dt = match_iter_n->time - match_iter->time;
+    double tau = query_time - match_iter->time;
+    double s   = tau / dt;
+    M3 R_h = match_iter->R;
+    M3 R_t = match_iter_n->R;
+    V3 p_h = match_iter->p;
+    V3 v_h = match_iter->v;
+    V3 acc_t = match_iter_n->a;
+    M3 R_i = Quat(R_h).slerp(s, Quat(R_t)).toRotationMatrix();
+    V3 p_i = p_h + v_h * tau + 0.5 * acc_t * tau * tau;
+    V3 t_ei = p_i - T_end_t;
+    V3 raw(pt.x, pt.y, pt.z);
+    V3 eigen_point = R_inv * (R_i * raw + t_ei);
+    pt_full.x = eigen_point[0];
+    pt_full.y = eigen_point[1];
+    pt_full.z = eigen_point[2];
+  }
 }
 
 
@@ -1022,35 +1030,16 @@ void SuperLIO::DownSampleOnly(){
   auto& raw_pc = measures_.lidar.pc;
   std::size_t ptsize = raw_pc->size();
 
-  // Thread-local collectors for parallel filtering
-  tbb::enumerable_thread_specific<std::vector<pcl::PointXYZI>> tls_points;
-
-  tbb::parallel_for(
-    tbb::blocked_range<size_t>(0, ptsize),
-    [&](const tbb::blocked_range<size_t>& r) {
-      auto& local_pts = tls_points.local();
-      local_pts.reserve(256);
-      for (size_t i = r.begin(); i < r.end(); ++i) {
-        const auto& pt = raw_pc->points[i];
-
-        // Apply range filter
-        double dis = pt.x * pt.x + pt.y * pt.y + pt.z * pt.z;
-        if (dis > g_blind2 && dis < g_maxrange2) {
-          pcl::PointXYZI pt_out;
-          pt_out.x = pt.x;
-          pt_out.y = pt.y;
-          pt_out.z = pt.z;
-          pt_out.intensity = pt.intensity;
-          local_pts.push_back(pt_out);
-        }
-      }
-    }
-  );
-
-  // Merge thread-local results
-  for (auto& local_pts : tls_points) {
-    for (auto& p : local_pts) {
-      scan_undistort_full_->push_back(p);
+  for (size_t i = 0; i < ptsize; ++i) {
+    const auto& pt = raw_pc->points[i];
+    double dis = pt.x * pt.x + pt.y * pt.y + pt.z * pt.z;
+    if (dis > g_blind2 && dis < g_maxrange2) {
+      pcl::PointXYZI pt_out;
+      pt_out.x = pt.x;
+      pt_out.y = pt.y;
+      pt_out.z = pt.z;
+      pt_out.intensity = pt.intensity;
+      scan_undistort_full_->push_back(pt_out);
     }
   }
   
@@ -1064,13 +1053,6 @@ void SuperLIO::DownSampleOnly(){
 }
 
 
-struct ThreadACC{
-  M6d HTVH = M6d::Zero();
-  V6d HTVr = V6d::Zero();
-  ThreadACC(): HTVH(M6d::Zero()), HTVr(V6d::Zero()) {}
-};
-
-
 void SuperLIO::Observe(){
   size_t ptsize = ds_undistort_->size();
   
@@ -1081,16 +1063,11 @@ void SuperLIO::Observe(){
   effect_knn_num_ = ptsize;
   std::iota(effect_knn_idxs_.begin(), effect_knn_idxs_.begin() + ptsize, 0);
 
-  tbb::parallel_for(
-    tbb::blocked_range<size_t>(0, ptsize),
-    [&](const tbb::blocked_range<size_t>& r) {
-      for (size_t i = r.begin(); i < r.end(); ++i) {
-        const auto& point_body_pcl = ds_undistort_->points[i];
-        points_body_v3_[i] = V3(point_body_pcl.x, point_body_pcl.y, point_body_pcl.z);
-        _lengths[i] = points_body_v3_[i].norm();
-      }
-    }
-  );
+  for (size_t i = 0; i < ptsize; ++i) {
+    const auto& point_body_pcl = ds_undistort_->points[i];
+    points_body_v3_[i] = V3(point_body_pcl.x, point_body_pcl.y, point_body_pcl.z);
+    _lengths[i] = points_body_v3_[i].norm();
+  }
 
   ivox_->reset_max_group();
   int iter_num = 0;
@@ -1100,57 +1077,47 @@ void SuperLIO::Observe(){
     const bool need_converge = kf_state.need_converge;
     const M3d R_transpose = (pose.R_.transpose()).cast<double>();
 
-    tbb::enumerable_thread_specific<ThreadACC> tls_acc;
-
-    tbb::parallel_for(
-      tbb::blocked_range<size_t>(0, effect_knn_num_),
-      [&](const tbb::blocked_range<size_t>& r) {
-        KNNHeapType top_K;
-        auto& local_acc = tls_acc.local();
-        for (size_t r_s = r.begin(); r_s < r.end(); ++r_s) {
-          int idx = effect_knn_idxs_[r_s];
-          V3& point_body = points_body_v3_[idx];
-          V3 point_world = pose * point_body;
-
-          if(!need_converge){
-            top_K.reset();
-            ivox_->getTopK(point_world, top_K);
-            if(top_K.count < 4){
-              effect_mask_[idx] = false;
-              effect_knn_mask_[idx] = false;
-              continue;
-            }
-            effect_knn_mask_[idx] = true;
-            effect_mask_[idx] = calc_plane_coeff(top_K.count, top_K.points_, abcd_vec_[idx]);
-          }
-
-          if(!effect_mask_[idx]) continue;
-
-          auto& abcd = abcd_vec_[idx];
-          scalar error;
-          effect_mask_[idx] = compute_error(abcd, point_world, _lengths[idx], error);
-          if(!effect_mask_[idx]) continue;
-          
-          {
-            V3d normvec(abcd[0], abcd[1], abcd[2]);
-            V3d nb = R_transpose * normvec;
-            V3d point_body_d = point_body.cast<double>();
-            V6d J;
-            J.head<3>() = point_body_d.cross(nb);
-            J.tail<3>() = normvec;
-      
-            local_acc.HTVH += J * 1000 * J.transpose();
-            local_acc.HTVr -= J * 1000 * error;
-          }
-        }
-    });
-
     M6d sum_HTVH = M6d::Zero();
     V6d sum_HTVr = V6d::Zero();
-    for(const auto& local_acc : tls_acc){
-      sum_HTVH += local_acc.HTVH;
-      sum_HTVr += local_acc.HTVr;
+    KNNHeapType top_K;
+
+    for (size_t r_s = 0; r_s < effect_knn_num_; ++r_s) {
+      int idx = effect_knn_idxs_[r_s];
+      V3& point_body = points_body_v3_[idx];
+      V3 point_world = pose * point_body;
+
+      if(!need_converge){
+        top_K.reset();
+        ivox_->getTopK(point_world, top_K);
+        if(top_K.count < 4){
+          effect_mask_[idx] = false;
+          effect_knn_mask_[idx] = false;
+          continue;
+        }
+        effect_knn_mask_[idx] = true;
+        effect_mask_[idx] = calc_plane_coeff(top_K.count, top_K.points_, abcd_vec_[idx]);
+      }
+
+      if(!effect_mask_[idx]) continue;
+
+      auto& abcd = abcd_vec_[idx];
+      scalar error;
+      effect_mask_[idx] = compute_error(abcd, point_world, _lengths[idx], error);
+      if(!effect_mask_[idx]) continue;
+      
+      {
+        V3d normvec(abcd[0], abcd[1], abcd[2]);
+        V3d nb = R_transpose * normvec;
+        V3d point_body_d = point_body.cast<double>();
+        V6d J;
+        J.head<3>() = point_body_d.cross(nb);
+        J.tail<3>() = normvec;
+  
+        sum_HTVH += J * 1000 * J.transpose();
+        sum_HTVr -= J * 1000 * error;
+      }
     }
+
     HTVH = sum_HTVH.cast<scalar>();
     HTVr = sum_HTVr.cast<scalar>();
 
@@ -1164,7 +1131,6 @@ void SuperLIO::Observe(){
       _effect_knn_num++;
     }
 
-    // LOG(INFO) << "effect_knn_num_: " << effect_knn_num_ << ", _effect_knn_num: " << _effect_knn_num;
     effect_knn_num_ = _effect_knn_num;
 
     iter_num++;
@@ -1184,15 +1150,10 @@ void SuperLIO::UpdateMap() {
   const auto R = last_pose_.R_;
   const auto t = last_pose_.t_;
   
-  tbb::parallel_for(
-    tbb::blocked_range<size_t>(0, ptsize),
-    [&](const tbb::blocked_range<size_t>& r) {
-      for (size_t i = r.begin(); i < r.end(); ++i) {
-        const auto& pt = points_body_v3_[i];
-        points_world_v3_[i] = R * pt + t;
-      }
-    }
-  );
+  for (size_t i = 0; i < ptsize; ++i) {
+    const auto& pt = points_body_v3_[i];
+    points_world_v3_[i] = R * pt + t;
+  }
   
   ivox_->insert(points_world_v3_);
 
@@ -1271,9 +1232,8 @@ void SuperLIO::Output(){
       }
     }
   }else{
-    Eigen::Matrix4f transformation = Eigen::Matrix4f::Identity();
-    transformation.block<3, 3>(0, 0) = state.R.R_.cast<float>();
-    transformation.block<3, 1>(0, 3) = state.p.cast<float>();
+    const Eigen::Matrix3f Rf = state.R.R_.cast<float>();
+    const Eigen::Vector3f tf = state.p.cast<float>();
 
     if(g_visual_map){
       static int count = -1;
@@ -1282,11 +1242,13 @@ void SuperLIO::Output(){
         count = 0;
         output_data.world_pc.reset(new PointCloudType());
         if(g_visual_dense){
-          pcl::transformPointCloud(*scan_undistort_full_, *output_data.world_pc, transformation);
+          transformPointCloudRt(*scan_undistort_full_, *output_data.world_pc, Rf, tf);
         }else{
-          pcl::transformPointCloud(*ds_undistort_, *output_data.world_pc, transformation);
+          transformPointCloudRt(*ds_undistort_, *output_data.world_pc, Rf, tf);
         }
         output_data.has_world_pc = true;
+        // Cache transformed cloud for caceData reuse
+        last_transformed_world_pc_ = output_data.world_pc;
       }
     }
 

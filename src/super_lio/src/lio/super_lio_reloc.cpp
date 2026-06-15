@@ -2,10 +2,6 @@
 #include "lio/super_lio_reloc.h"
 
 #include <sys/resource.h>
-#include <tbb/parallel_for.h>
-#include <tbb/blocked_range.h>
-#include <tbb/concurrent_vector.h>
-#include <tbb/enumerable_thread_specific.h>
 
 #include <pcl/registration/icp.h>
 #include <pcl/registration/ndt.h>
@@ -13,6 +9,32 @@
 
 
 using namespace BASIC;
+
+namespace {
+
+inline void transformPointCloudRt(const pcl::PointCloud<pcl::PointXYZI>& src,
+                                   pcl::PointCloud<pcl::PointXYZI>& dst,
+                                   const Eigen::Matrix3f& R,
+                                   const Eigen::Vector3f& t) {
+  dst.resize(src.size());
+  const float* r0 = R.data();
+  const float* r1 = r0 + 3;
+  const float* r2 = r1 + 3;
+  for (size_t i = 0; i < src.size(); ++i) {
+    const auto& p = src.points[i];
+    auto& q = dst.points[i];
+    q.x = r0[0]*p.x + r0[1]*p.y + r0[2]*p.z + t[0];
+    q.y = r1[0]*p.x + r1[1]*p.y + r1[2]*p.z + t[1];
+    q.z = r2[0]*p.x + r2[1]*p.y + r2[2]*p.z + t[2];
+    q.intensity = p.intensity;
+  }
+  dst.header = src.header;
+  dst.width = dst.size();
+  dst.height = 1;
+  dst.is_dense = src.is_dense;
+}
+
+} // anonymous namespace
 
 namespace LI2Sup{
 
@@ -200,7 +222,7 @@ bool SuperLIOReLoc::kf_init(){
 
 
   pcl::PointCloud<pcl::PointXYZI>::Ptr tmp_src(new pcl::PointCloud<pcl::PointXYZI>());
-  pcl::transformPointCloud(*init_obs_data_, *tmp_src, Eigen::Matrix4f::Identity());
+  *tmp_src = *init_obs_data_;
 
   pcl::NormalDistributionsTransform<pcl::PointXYZI, pcl::PointXYZI> ndt;
   ndt.setTransformationEpsilon(1e-4);
@@ -305,9 +327,8 @@ void SuperLIOReLoc::Output() {
   auto state = kf_->GetNavState();
   data_wrapper_->pub_odom(state);  
 
-  Eigen::Matrix4f transformation = Eigen::Matrix4f::Identity();
-  transformation.block<3, 3>(0, 0) = state.R.R_.cast<float>();
-  transformation.block<3, 1>(0, 3) = state.p.cast<float>();
+  const Eigen::Matrix3f Rf = state.R.R_.cast<float>();
+  const Eigen::Vector3f tf = state.p.cast<float>();
 
   CloudPtr world_pc(new PointCloudType());
   CloudPtr body_pc(new PointCloudType());
@@ -318,10 +339,10 @@ void SuperLIOReLoc::Output() {
     if(count % g_pub_step == 0){
       count = 0;
       if(g_visual_dense){
-        pcl::transformPointCloud(*scan_undistort_full_, *world_pc, transformation);
+        transformPointCloudRt(*scan_undistort_full_, *world_pc, Rf, tf);
         data_wrapper_->pub_cloud_world(world_pc, state.timestamp);
       }else{
-        pcl::transformPointCloud(*ds_undistort_, *world_pc, transformation);
+        transformPointCloudRt(*ds_undistort_, *world_pc, Rf, tf);
         data_wrapper_->pub_cloud_world(world_pc, state.timestamp);
       }
     }

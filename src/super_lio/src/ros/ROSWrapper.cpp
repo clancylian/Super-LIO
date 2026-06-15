@@ -16,6 +16,49 @@ using namespace BASIC;
 
 namespace LI2Sup{
 
+namespace {
+
+// Fast PointXYZI → PointCloud2 serialization (avoids pcl::toROSMsg overhead)
+// Only writes x, y, z, intensity fields (4 floats per point = 16 bytes)
+inline void pclToROSMsg(const pcl::PointCloud<pcl::PointXYZI>& pc,
+                         sensor_msgs::msg::PointCloud2& cloud) {
+  cloud.height = 1;
+  cloud.width = pc.size();
+  cloud.fields.resize(4);
+
+  cloud.fields[0].name = "x";
+  cloud.fields[0].offset = 0;
+  cloud.fields[0].datatype = sensor_msgs::msg::PointField::FLOAT32;
+  cloud.fields[0].count = 1;
+
+  cloud.fields[1].name = "y";
+  cloud.fields[1].offset = 4;
+  cloud.fields[1].datatype = sensor_msgs::msg::PointField::FLOAT32;
+  cloud.fields[1].count = 1;
+
+  cloud.fields[2].name = "z";
+  cloud.fields[2].offset = 8;
+  cloud.fields[2].datatype = sensor_msgs::msg::PointField::FLOAT32;
+  cloud.fields[2].count = 1;
+
+  cloud.fields[3].name = "intensity";
+  cloud.fields[3].offset = 12;
+  cloud.fields[3].datatype = sensor_msgs::msg::PointField::FLOAT32;
+  cloud.fields[3].count = 1;
+
+  cloud.point_step = 16;
+  cloud.row_step = cloud.point_step * cloud.width;
+  cloud.is_bigendian = false;
+  cloud.is_dense = pc.is_dense;
+
+  cloud.data.resize(cloud.row_step);
+  if (!pc.empty()) {
+    memcpy(cloud.data.data(), pc.points.data(), cloud.row_step);
+  }
+}
+
+} // anonymous namespace
+
 void LoadParamFromRos(rclcpp::Node& node)
 {
   node.declare_parameter<bool>("lio.map.save_map", false);
@@ -743,299 +786,170 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
   double offset_time = 0.0;
   double dis = 0.0;
 
-  switch (g_lidar_type) {
+  // Zero-copy: resolve field offsets once, then iterate msg->data directly
+  const auto& fields = msg->fields;
+  const uint32_t point_step = msg->point_step;
+  const uint32_t row_step = msg->row_step;
+  const uint32_t height = msg->height;
+  const uint32_t width = msg->width;
+  const size_t num_points = static_cast<size_t>(height) * width;
 
-  case LID_TYPE::HESAI16:
-  {
-    pcl::PointCloud<hesai_ros::Point> pl_orig;
-    pcl::fromROSMsg(*msg, pl_orig);
-    lidar_data.pc->reserve(pl_orig.size() / g_filter_rate + 1);
-    const double time_begin = pl_orig.points[0].timestamp;
-    lidar_data.start_time = this->now().seconds();
-    for(std::size_t i = g_filter_offset; i < pl_orig.size(); i += g_filter_rate)
-    {
-      auto& pt = pl_orig.points[i];
-      if (!validPoint(pt.x, pt.y, pt.z)) continue;
-      if(g_intensity_filter_en && pt.intensity < g_intensity_min) continue;
-      offset_time = pt.timestamp - time_begin;
-      lidar_data.pc->emplace_back(
-          pt.x, pt.y, pt.z, pt.intensity, offset_time);
+  // Find field offsets
+  uint32_t off_x = 0, off_y = 0, off_z = 0, off_intensity = 0, off_time = 0;
+  bool has_intensity = false, has_time = false;
+  uint8_t time_type = 0; // 0=none, 1=float, 2=double, 3=uint32, 4=uint64
+  for (const auto& f : fields) {
+    if (f.name == "x") off_x = f.offset;
+    else if (f.name == "y") off_y = f.offset;
+    else if (f.name == "z") off_z = f.offset;
+    else if (f.name == "intensity") { off_intensity = f.offset; has_intensity = true; }
+    else if (f.name == "timestamp" || f.name == "time" || f.name == "t") {
+      off_time = f.offset;
+      has_time = true;
+      if (f.datatype == sensor_msgs::msg::PointField::FLOAT64) time_type = 2;
+      else if (f.datatype == sensor_msgs::msg::PointField::FLOAT32) time_type = 1;
+      else if (f.datatype == sensor_msgs::msg::PointField::UINT32) time_type = 3;
+      else if (f.datatype == sensor_msgs::msg::PointField::UINT64) time_type = 4;
     }
-    // Full column retention
-    if (g_full_column_interval > 0 && g_lidar_channels > 0) {
-      int num_cols = pl_orig.size() / g_lidar_channels;
-      for (int col = 0; col < num_cols; col += g_full_column_interval) {
-        int base = col * g_lidar_channels;
-        for (int k = base; k < base + g_lidar_channels && k < (int)pl_orig.size(); ++k) {
-          if (((int)k - (int)g_filter_offset) % g_filter_rate == 0) continue;
-          auto& pt = pl_orig.points[k];
-          if (!validPoint(pt.x, pt.y, pt.z)) continue;
-          if(g_intensity_filter_en && pt.intensity < g_intensity_min) continue;
-          lidar_data.pc->emplace_back(
-              pt.x, pt.y, pt.z, pt.intensity, pt.timestamp - time_begin);
-        }
-      }
-    }
-    // 更新偏移量
-    if(g_filter_rate > 0) {
-      g_filter_offset = (g_filter_offset + 1) % g_filter_rate;
-    }
-    lidar_data.end_time = lidar_data.start_time + offset_time;
-    break;
   }
-  case LID_TYPE::VEL_NCLT:
-  {
-    pcl::PointCloud<NCLT::Point> pl_orig;
-    pcl::fromROSMsg(*msg, pl_orig);
-    lidar_data.pc->reserve(pl_orig.size() / g_filter_rate + 1);
-    lidar_data.start_time = this->now().seconds();
-    
-    for(std::size_t i = g_filter_offset; i < pl_orig.size(); i += g_filter_rate){
-      auto& pt = pl_orig.points[i];
-      if (!validPoint(pt.x, pt.y, pt.z)) continue;
-      offset_time = pt.time * 1e-6;
-      lidar_data.pc->emplace_back(
-          pt.x, pt.y, pt.z, 1.0, offset_time);
+
+  const uint8_t* data_ptr = msg->data.data();
+
+  // Helper to read a point field from raw data
+  auto read_float = [&](size_t idx, uint32_t offset) -> float {
+    float val;
+    memcpy(&val, data_ptr + idx * point_step + offset, sizeof(float));
+    return val;
+  };
+
+  lidar_data.pc->reserve(num_points / g_filter_rate + 1);
+  lidar_data.start_time = this->now().seconds();
+
+  // Find min time for relative offset calculation
+  double time_begin = 0.0;
+  bool need_scan_min_max = (g_lidar_type == LID_TYPE::ROBOSENSE_AIRY && has_time);
+  if (need_scan_min_max) {
+    // ROBOSENSE: need global min time across all points
+    double min_time = std::numeric_limits<double>::max();
+    for (size_t i = 0; i < num_points; ++i) {
+      double t = 0.0;
+      if (time_type == 2) { memcpy(&t, data_ptr + i * point_step + off_time, sizeof(double)); }
+      else if (time_type == 1) { float ft; memcpy(&ft, data_ptr + i * point_step + off_time, sizeof(float)); t = ft; }
+      if (t < min_time && t > 0) min_time = t;
     }
-    // Full column retention
-    if (g_full_column_interval > 0 && g_lidar_channels > 0) {
-      int num_cols = pl_orig.size() / g_lidar_channels;
-      for (int col = 0; col < num_cols; col += g_full_column_interval) {
-        int base = col * g_lidar_channels;
-        for (int k = base; k < base + g_lidar_channels && k < (int)pl_orig.size(); ++k) {
-          if (((int)k - (int)g_filter_offset) % g_filter_rate == 0) continue;
-          auto& pt = pl_orig.points[k];
-          if (!validPoint(pt.x, pt.y, pt.z)) continue;
-          lidar_data.pc->emplace_back(
-              pt.x, pt.y, pt.z, 1.0, pt.time * 1e-6);
+    time_begin = min_time;
+  } else if (has_time && g_lidar_type != LID_TYPE::GAZEBO) {
+    // Read first valid point's time as reference
+    for (size_t i = 0; i < std::min(num_points, size_t(10)); ++i) {
+      float x = read_float(i, off_x);
+      float y = read_float(i, off_y);
+      float z = read_float(i, off_z);
+      if (validPoint(x, y, z)) {
+        if (time_type == 2) {
+          double t; memcpy(&t, data_ptr + i * point_step + off_time, sizeof(double));
+          time_begin = t;
+        } else if (time_type == 1) {
+          float t; memcpy(&t, data_ptr + i * point_step + off_time, sizeof(float));
+          time_begin = t;
+        } else if (time_type == 3) {
+          uint32_t t; memcpy(&t, data_ptr + i * point_step + off_time, sizeof(uint32_t));
+          time_begin = static_cast<double>(t);
+        } else if (time_type == 4) {
+          uint64_t t; memcpy(&t, data_ptr + i * point_step + off_time, sizeof(uint64_t));
+          time_begin = static_cast<double>(t);
         }
+        break;
       }
     }
-    // 更新偏移量
-    if(g_filter_rate > 0) {
-      g_filter_offset = (g_filter_offset + 1) % g_filter_rate;
-    }
-    lidar_data.end_time = lidar_data.start_time + offset_time;
-    break;
   }
-  case LID_TYPE::VELO16:
-  case LID_TYPE::VELO32:
-  {
-    pcl::PointCloud<velodyne_ros::Point> pl_orig;
-    pcl::fromROSMsg(*msg, pl_orig);
-    lidar_data.pc->reserve(pl_orig.size() / g_filter_rate + 1);
-    lidar_data.start_time = this->now().seconds();
 
-    for(std::size_t i = g_filter_offset; i < pl_orig.size(); i += g_filter_rate){
-      auto& pt = pl_orig.points[i];
-      if (!validPoint(pt.x, pt.y, pt.z)) continue;
-      if(g_intensity_filter_en && pt.intensity < g_intensity_min) continue;
-      lidar_data.pc->emplace_back(
-          pt.x, pt.y, pt.z, pt.intensity, pt.time);
-    }
-    // Full column retention
-    if (g_full_column_interval > 0 && g_lidar_channels > 0) {
-      int num_cols = pl_orig.size() / g_lidar_channels;
-      for (int col = 0; col < num_cols; col += g_full_column_interval) {
-        int base = col * g_lidar_channels;
-        for (int k = base; k < base + g_lidar_channels && k < (int)pl_orig.size(); ++k) {
-          if (((int)k - (int)g_filter_offset) % g_filter_rate == 0) continue;
-          auto& pt = pl_orig.points[k];
-          if (!validPoint(pt.x, pt.y, pt.z)) continue;
-          if(g_intensity_filter_en && pt.intensity < g_intensity_min) continue;
-          lidar_data.pc->emplace_back(
-              pt.x, pt.y, pt.z, pt.intensity, pt.time);
+  double max_offset_time = 0.0;
+
+  for (size_t i = g_filter_offset; i < num_points; i += g_filter_rate) {
+    float x = read_float(i, off_x);
+    float y = read_float(i, off_y);
+    float z = read_float(i, off_z);
+    if (!validPoint(x, y, z)) continue;
+
+    float intensity = has_intensity ? read_float(i, off_intensity) : 1.0f;
+    if (g_intensity_filter_en && intensity < g_intensity_min) continue;
+
+    // Compute offset_time based on lidar type and time field
+    if (has_time) {
+      switch (time_type) {
+        case 2: { // FLOAT64 (HESAI timestamp - absolute)
+          double t; memcpy(&t, data_ptr + i * point_step + off_time, sizeof(double));
+          offset_time = t - time_begin;
+          break;
         }
-      }
-    }
-    // 更新偏移量
-    if(g_filter_rate > 0) {
-      g_filter_offset = (g_filter_offset + 1) % g_filter_rate;
-    }
-    lidar_data.end_time = lidar_data.start_time + lidar_data.pc->points.back().offset_time;
-    break;
-  }
-  case OUSTER:
-  {
-    pcl::PointCloud<ouster_ros::Point> pl_orig;
-    pcl::fromROSMsg(*msg, pl_orig);
-    lidar_data.pc->reserve(pl_orig.size() / g_filter_rate + 1);
-    lidar_data.start_time = this->now().seconds();
-
-    for(std::size_t i = g_filter_offset; i < pl_orig.size(); i += g_filter_rate){
-      auto& pt = pl_orig.points[i];
-      if (!validPoint(pt.x, pt.y, pt.z)) continue;
-      if(g_intensity_filter_en && pt.intensity < g_intensity_min) continue;
-      offset_time = pt.t * 1e-9;
-      lidar_data.pc->emplace_back(
-          pt.x, pt.y, pt.z, pt.intensity, offset_time);
-    }
-    // Full column retention
-    if (g_full_column_interval > 0 && g_lidar_channels > 0) {
-      int num_cols = pl_orig.size() / g_lidar_channels;
-      for (int col = 0; col < num_cols; col += g_full_column_interval) {
-        int base = col * g_lidar_channels;
-        for (int k = base; k < base + g_lidar_channels && k < (int)pl_orig.size(); ++k) {
-          if (((int)k - (int)g_filter_offset) % g_filter_rate == 0) continue;
-          auto& pt = pl_orig.points[k];
-          if (!validPoint(pt.x, pt.y, pt.z)) continue;
-          if(g_intensity_filter_en && pt.intensity < g_intensity_min) continue;
-          lidar_data.pc->emplace_back(
-              pt.x, pt.y, pt.z, pt.intensity, pt.t * 1e-9);
-        }
-      }
-    }
-    // 更新偏移量
-    if(g_filter_rate > 0) {
-      g_filter_offset = (g_filter_offset + 1) % g_filter_rate;
-    }
-    lidar_data.end_time = lidar_data.start_time + offset_time;
-    break;
-  }
-  case LID_TYPE::GAZEBO:
-  {
-    pcl::PointCloud<pcl::PointXYZI> pl_orig;
-    pcl::fromROSMsg(*msg, pl_orig);
-    lidar_data.pc->reserve(pl_orig.size() / g_filter_rate + 1);
-    lidar_data.start_time = this->now().seconds();
-
-    for(std::size_t i = g_filter_offset; i < pl_orig.size(); i += g_filter_rate){
-      auto& pt = pl_orig.points[i];
-      if (!validPoint(pt.x, pt.y, pt.z)) continue;
-      if(g_intensity_filter_en && pt.intensity < g_intensity_min) continue;
-      offset_time = static_cast<double>(i) / pl_orig.size() * 0.1;
-      lidar_data.pc->emplace_back(
-          pt.x, pt.y, pt.z, pt.intensity, offset_time);
-    }
-    // Full column retention
-    if (g_full_column_interval > 0 && g_lidar_channels > 0) {
-      int num_cols = pl_orig.size() / g_lidar_channels;
-      for (int col = 0; col < num_cols; col += g_full_column_interval) {
-        int base = col * g_lidar_channels;
-        for (int k = base; k < base + g_lidar_channels && k < (int)pl_orig.size(); ++k) {
-          if (((int)k - (int)g_filter_offset) % g_filter_rate == 0) continue;
-          auto& pt = pl_orig.points[k];
-          if (!validPoint(pt.x, pt.y, pt.z)) continue;
-          if(g_intensity_filter_en && pt.intensity < g_intensity_min) continue;
-          lidar_data.pc->emplace_back(
-              pt.x, pt.y, pt.z, pt.intensity, static_cast<double>(k) / pl_orig.size() * 0.1);
-        }
-      }
-    }
-    // 更新偏移量
-    if(g_filter_rate > 0) {
-      g_filter_offset = (g_filter_offset + 1) % g_filter_rate;
-    }
-    lidar_data.end_time = lidar_data.start_time + offset_time;
-    break;
-  }
-  case LID_TYPE::ROBOSENSE_AIRY:
-  {
-    bool has_ring = false;
-    bool has_timestamp = false;
-    for (const auto& field : msg->fields) {
-      if (field.name == "ring") has_ring = true;
-      if (field.name == "timestamp") has_timestamp = true;
-    }
-
-    if (has_ring && has_timestamp) {
-      pcl::PointCloud<robosenseM1_ros::Point> pl_orig;
-      pcl::fromROSMsg(*msg, pl_orig);
-      int plsize = pl_orig.size();
-      if (plsize == 0) return;
-      lidar_data.pc->reserve(plsize / g_filter_rate + 1);
-
-      double min_time = std::numeric_limits<double>::max();
-      double max_time = std::numeric_limits<double>::lowest();
-      for (int i = 0; i < plsize; ++i) {
-        double ts = pl_orig.points[i].timestamp;
-        if (ts < min_time) min_time = ts;
-        if (ts > max_time) max_time = ts;
-      }
-      lidar_data.start_time = this->now().seconds();
-
-      for (int i = g_filter_offset; i < plsize; i += g_filter_rate) {
-        auto& pt = pl_orig.points[i];
-        float ros_x = pt.x;
-        float ros_y = pt.y;
-        float ros_z = pt.z;
-        if (!validPoint(ros_x, ros_y, ros_z)) continue;
-        if(g_intensity_filter_en && pt.intensity < g_intensity_min) continue;
-        offset_time = pt.timestamp - min_time;
-        lidar_data.pc->emplace_back(
-            ros_x, ros_y, ros_z, pt.intensity, offset_time);
-      }
-      // Full column retention
-      if (g_full_column_interval > 0 && g_lidar_channels > 0) {
-        int num_cols = plsize / g_lidar_channels;
-        for (int col = 0; col < num_cols; col += g_full_column_interval) {
-          int base = col * g_lidar_channels;
-          for (int k = base; k < base + g_lidar_channels && k < plsize; ++k) {
-            if ((k - (int)g_filter_offset) % g_filter_rate == 0) continue;
-            auto& pt = pl_orig.points[k];
-            float ros_x = pt.x;
-            float ros_y = pt.y;
-            float ros_z = pt.z;
-            if (!validPoint(ros_x, ros_y, ros_z)) continue;
-            if(g_intensity_filter_en && pt.intensity < g_intensity_min) continue;
-            lidar_data.pc->emplace_back(
-                ros_x, ros_y, ros_z, pt.intensity, pt.timestamp - min_time);
+        case 1: { // FLOAT32 (Velodyne time - relative to scan start; OUSTER - absolute)
+          float t; memcpy(&t, data_ptr + i * point_step + off_time, sizeof(float));
+          if (g_lidar_type == LID_TYPE::VELO16 || g_lidar_type == LID_TYPE::VELO32) {
+            offset_time = static_cast<double>(t); // already relative
+          } else {
+            offset_time = static_cast<double>(t) - time_begin;
           }
+          break;
         }
+        case 3: { // UINT32 (NCLT time - microseconds, absolute)
+          uint32_t t; memcpy(&t, data_ptr + i * point_step + off_time, sizeof(uint32_t));
+          offset_time = t * 1e-6 - time_begin;
+          break;
+        }
+        case 4: { // UINT64 (OUSTER t - nanoseconds, absolute)
+          uint64_t t; memcpy(&t, data_ptr + i * point_step + off_time, sizeof(uint64_t));
+          offset_time = t * 1e-9 - time_begin;
+          break;
+        }
+        default:
+          offset_time = 0.0;
       }
-      // 更新偏移量
-      if(g_filter_rate > 0) {
-        g_filter_offset = (g_filter_offset + 1) % g_filter_rate;
-      }
-      lidar_data.end_time = lidar_data.start_time + (max_time - min_time);
     } else {
-      pcl::PointCloud<pcl::PointXYZI> pl_orig;
-      pcl::fromROSMsg(*msg, pl_orig);
-      int plsize = pl_orig.size();
-      if (plsize == 0) return;
-      lidar_data.pc->reserve(plsize / g_filter_rate + 1);
-      lidar_data.start_time = this->now().seconds();
-
-      for (int i = g_filter_offset; i < plsize; i += g_filter_rate) {
-        auto& pt = pl_orig.points[i];
-        float ros_x = pt.x;
-        float ros_y = pt.y;
-        float ros_z = pt.z;
-        if (!validPoint(ros_x, ros_y, ros_z)) continue;
-        if(g_intensity_filter_en && pt.intensity < g_intensity_min) continue;
-        lidar_data.pc->emplace_back(
-            ros_x, ros_y, ros_z, pt.intensity, 0.0);
-      }
-      // Full column retention
-      if (g_full_column_interval > 0 && g_lidar_channels > 0) {
-        int num_cols = plsize / g_lidar_channels;
-        for (int col = 0; col < num_cols; col += g_full_column_interval) {
-          int base = col * g_lidar_channels;
-          for (int k = base; k < base + g_lidar_channels && k < plsize; ++k) {
-            if ((k - (int)g_filter_offset) % g_filter_rate == 0) continue;
-            auto& pt = pl_orig.points[k];
-            float ros_x = pt.x;
-            float ros_y = pt.y;
-            float ros_z = pt.z;
-            if (!validPoint(ros_x, ros_y, ros_z)) continue;
-            if(g_intensity_filter_en && pt.intensity < g_intensity_min) continue;
-            lidar_data.pc->emplace_back(
-                ros_x, ros_y, ros_z, pt.intensity, 0.0);
-          }
-        }
-      }
-      // 更新偏移量
-      if(g_filter_rate > 0) {
-        g_filter_offset = (g_filter_offset + 1) % g_filter_rate;
-      }
-      lidar_data.end_time = lidar_data.start_time;
+      // No time field: synthesize from index (GAZEBO-like)
+      offset_time = static_cast<double>(i) / num_points * 0.1;
     }
-    break;
+
+    lidar_data.pc->emplace_back(x, y, z, intensity, offset_time);
+    if (offset_time > max_offset_time) max_offset_time = offset_time;
   }
-  default:
-    return;
+
+  // Full column retention
+  if (g_full_column_interval > 0 && g_lidar_channels > 0) {
+    int num_cols = num_points / g_lidar_channels;
+    for (int col = 0; col < num_cols; col += g_full_column_interval) {
+      int base = col * g_lidar_channels;
+      for (int k = base; k < base + g_lidar_channels && k < (int)num_points; ++k) {
+        if (((int)k - (int)g_filter_offset) % g_filter_rate == 0) continue;
+        float x = read_float(k, off_x);
+        float y = read_float(k, off_y);
+        float z = read_float(k, off_z);
+        if (!validPoint(x, y, z)) continue;
+        float intensity = has_intensity ? read_float(k, off_intensity) : 1.0f;
+        if (g_intensity_filter_en && intensity < g_intensity_min) continue;
+
+        if (has_time) {
+          switch (time_type) {
+            case 2: { double t; memcpy(&t, data_ptr + k * point_step + off_time, sizeof(double)); offset_time = t - time_begin; break; }
+            case 1: { float t; memcpy(&t, data_ptr + k * point_step + off_time, sizeof(float));
+              if (g_lidar_type == LID_TYPE::VELO16 || g_lidar_type == LID_TYPE::VELO32) offset_time = t;
+              else offset_time = static_cast<double>(t) - time_begin; break; }
+            case 3: { uint32_t t; memcpy(&t, data_ptr + k * point_step + off_time, sizeof(uint32_t)); offset_time = t * 1e-6 - time_begin; break; }
+            case 4: { uint64_t t; memcpy(&t, data_ptr + k * point_step + off_time, sizeof(uint64_t)); offset_time = t * 1e-9 - time_begin; break; }
+            default: offset_time = 0.0;
+          }
+        } else {
+          offset_time = static_cast<double>(k) / num_points * 0.1;
+        }
+        lidar_data.pc->emplace_back(x, y, z, intensity, offset_time);
+      }
+    }
   }
-  
+
+  // 更新偏移量
+  if (g_filter_rate > 0) {
+    g_filter_offset = (g_filter_offset + 1) % g_filter_rate;
+  }
+  lidar_data.end_time = lidar_data.start_time + max_offset_time;
   lidar_data.frame_id = msg->header.frame_id;
   lidar_buffer_.push_back(lidar_data);
 }
@@ -1214,7 +1128,7 @@ if (g_footprint_pub_en) {
 
 void ROSWrapper::pub_cloud_world(const CloudPtr& pc, double time){
   sensor_msgs::msg::PointCloud2 cloud;
-  pcl::toROSMsg(*pc, cloud);
+  pclToROSMsg(*pc, cloud);
   cloud.header.frame_id = g_world_frame;
   cloud.header.stamp = toRosTime(time);
   pub_cloud_world_->publish(cloud);
@@ -1239,7 +1153,7 @@ void ROSWrapper::pub_cloud_world_undistort_only(const CloudPtr& pc, double time,
     LOG(WARNING) << YELLOW << " ---> [Undistort] TF lookup failed: " << ex.what() 
                  << ", publishing without transform to " << g_world_frame << RESET;
     sensor_msgs::msg::PointCloud2 cloud;
-    pcl::toROSMsg(*pc, cloud);
+    pclToROSMsg(*pc, cloud);
     cloud.header.frame_id = g_world_frame;
     cloud.header.stamp = toRosTime(time);
     pub_cloud_world_->publish(cloud);
@@ -1249,7 +1163,7 @@ void ROSWrapper::pub_cloud_world_undistort_only(const CloudPtr& pc, double time,
 
 void ROSWrapper::pub_cloud_body(const CloudPtr& pc, double time){
   sensor_msgs::msg::PointCloud2 cloud;
-  pcl::toROSMsg(*pc, cloud);
+  pclToROSMsg(*pc, cloud);
   cloud.header.frame_id = g_imu_frame;
   cloud.header.stamp = toRosTime(time);
   pub_cloud_body_->publish(cloud);
@@ -1258,7 +1172,7 @@ void ROSWrapper::pub_cloud_body(const CloudPtr& pc, double time){
 
 void ROSWrapper::pub_cloud_undistort_only(const CloudPtr& pc, double time, const std::string& lidar_frame){
   sensor_msgs::msg::PointCloud2 cloud;
-  pcl::toROSMsg(*pc, cloud);
+  pclToROSMsg(*pc, cloud);
   cloud.header.frame_id = lidar_frame;
   cloud.header.stamp = toRosTime(time);
   pub_cloud_body_->publish(cloud);
@@ -1270,7 +1184,7 @@ void ROSWrapper::pub_cloud2planner(const CloudPtr& pc, double time){
     this->create_publisher<sensor_msgs::msg::PointCloud2>(
         "lio/robo/cloud_world", rclcpp::QoS(rclcpp::KeepLast(2)).best_effort().durability_volatile());
   sensor_msgs::msg::PointCloud2 cloud;
-  pcl::toROSMsg(*pc, cloud);
+  pclToROSMsg(*pc, cloud);
   cloud.header.frame_id = "world";
   cloud.header.stamp = toRosTime(time);
   pub_cloud2robot_->publish(cloud);
@@ -1284,7 +1198,7 @@ void ROSWrapper::pub_cloud_body_pose(const CloudPtr& pc,
     this->create_publisher<super_lio::msg::CloudPose>(
         "/lio/body/cloud_pose", rclcpp::QoS(rclcpp::KeepLast(2)).best_effort().durability_volatile());
   super_lio::msg::CloudPose cloud_pose;
-  pcl::toROSMsg(*pc, cloud_pose.cloud);
+  pclToROSMsg(*pc, cloud_pose.cloud);
   cloud_pose.cloud.header.stamp = toRosTime(state.timestamp); 
   cloud_pose.pose.position.x = state.p[0];
   cloud_pose.pose.position.y = state.p[1];
@@ -1306,7 +1220,7 @@ void ROSWrapper::pub_cloud_world_pose(const CloudPtr& pc,
     this->create_publisher<super_lio::msg::CloudPose>(
         "/lio/world/cloud_pose", rclcpp::QoS(rclcpp::KeepLast(2)).best_effort().durability_volatile());
   super_lio::msg::CloudPose cloud_pose;
-  pcl::toROSMsg(*pc, cloud_pose.cloud);
+  pclToROSMsg(*pc, cloud_pose.cloud);
   cloud_pose.cloud.header.stamp = toRosTime(state.timestamp);  
   cloud_pose.pose.position.x = state.p[0];
   cloud_pose.pose.position.y = state.p[1];
@@ -1336,7 +1250,7 @@ void ROSWrapper::pub_processing_time(double time,
 
 
 void ROSWrapper::set_global_map(const BASIC::CloudPtr& global_map){
-  pcl::toROSMsg(*global_map, global_map_msg_);
+  pclToROSMsg(*global_map, global_map_msg_);
   global_map_msg_.header.frame_id = "world";
 
   static auto global_map_pub =

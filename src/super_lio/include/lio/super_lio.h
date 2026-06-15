@@ -19,8 +19,6 @@
 #include <pcl/common/transforms.h>
 #include <pcl/filters/voxel_grid.h>
 
-#include <tbb/global_control.h>
-
 #include "basic/alias.h"
 #include "common/ds.h"
 #include "common/timer.h"
@@ -142,7 +140,8 @@ protected:
 
   std::atomic<bool> paused_{false};
 
-  std::unique_ptr<tbb::global_control> tbb_control_;  // single-core: max 1 thread
+  // Cache for caceData reuse (avoid duplicate transformPointCloud)
+  BASIC::CloudPtr last_transformed_world_pc_;
 };
 
 } // namespace END.

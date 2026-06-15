@@ -34,6 +34,7 @@ namespace LI2Sup{
   float  g_maxrange2;
   int    g_filter_rate;
   int    g_filter_offset = 0;
+  bool   g_enable_filter_offset = true;
   bool   g_enable_downsample;
   float  g_voxel_fliter_size;
   bool   g_intensity_filter_en = false;
@@ -99,7 +100,7 @@ namespace LI2Sup{
   double g_init_px, g_init_py, g_init_pz, g_init_roll, g_init_pitch, g_init_yaw;
 
   /// observe
-  float g_plane_fit_threshold = 0.1f;
+  double g_plane_fit_threshold = 0.15;
 
   /// for dynamic point removal
   bool g_dynamic_removal_enable = false;
@@ -120,5 +121,8 @@ namespace LI2Sup{
 
   /// Fast tf
   bool g_fast_tf = false;
+
+  /// 使用本地时钟替代话题原始时间戳
+  bool g_use_local_timestamp = true;
 
 }

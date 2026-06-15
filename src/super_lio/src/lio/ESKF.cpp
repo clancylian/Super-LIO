@@ -74,6 +74,18 @@ void ESKF::SetX(const SysState& x) {
   fw_v_ = v_;
 }
 
+/// 仅更新主状态 (R/p/v/bg/ba)，不触碰 fw_R_/fw_p_/fw_v_，
+/// 避免 IMU-rate fast_tf 前向预测链被打断
+void ESKF::SetMainState(const SysState& x) {
+  last_imu_time_ = x.timestamp;
+  current_time_ = last_imu_time_;
+  R_ = x.R;
+  p_ = x.p;
+  v_ = x.v;
+  bg_ = x.bg;
+  ba_ = x.ba;
+}
+
 
 void ESKF::BuildNoise(const Options& options) {
   double et = options.gyro_var_;
@@ -93,6 +105,7 @@ void ESKF::BuildNoise(const Options& options) {
                    ea2, ea2, ea2;    // nba: ba -> a -> v -> p
 }
 
+/// 状态更新：将误差状态 dx_ 叠加到名义状态上（旋转用左乘 Exp，平移/速度/bias 直接加）
 void ESKF::Update() {
   R_ = R_ * SO3::Exp(dx_.template block<3, 1>(0, 0));
   p_ += dx_.template block<3, 1>(3, 0);
@@ -111,6 +124,7 @@ void ESKF::Update() {
 }
 
 
+/// IMU 预测：前向传播名义状态 + 协方差，同时输出 IMU 和机器人位姿（供 fast_tf 使用）
 bool ESKF::Predict(const IMUData& imu, DynamicState& state_imu, DynamicState& state_robot){
   if(!init_) {
     return false;
@@ -226,6 +240,9 @@ bool ESKF::Predict(const IMUData& imu) {
 
 
 const int STATE_DIM = 18;
+
+/// 观测更新：迭代 ESKF，使用信息矩阵形式避免双求逆，
+/// 每次迭代仅一次 18x18 矩阵求逆（Yk = G^{-T} * Y_pred * G^{-1} + HTRH）
 bool ESKF::UpdateObserve(ESKF::ObsFunc obs) {
   // propagated state
   SO3 R_pred = R_;

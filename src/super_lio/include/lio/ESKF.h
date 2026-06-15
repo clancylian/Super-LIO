@@ -78,6 +78,10 @@ public:
 
   void SetX(const SysState& x);
 
+  /// 仅更新主状态 (R/p/v/bg/ba)，不触碰 fw_R_/fw_p_/fw_v_，
+  /// 避免 IMU-rate fast_tf 前向预测链被打断
+  void SetMainState(const SysState& x);
+
   void SetCov(const COV& cov){ P_ = cov; }
 
   BASIC::V3 GetGravity() const { return g_; }

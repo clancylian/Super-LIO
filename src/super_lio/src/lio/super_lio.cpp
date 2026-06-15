@@ -15,8 +15,8 @@ using namespace BASIC;
 
 namespace {
 
-// Efficient R*t point cloud transform (avoids pcl::transformPointCloud 4x4 overhead)
-// For PointXYZI: only transforms x,y,z; copies intensity
+// 高效 R*t 点云变换（避免 pcl::transformPointCloud 的 4x4 矩阵开销）
+// 仅变换 x,y,z，直接拷贝 intensity
 inline void transformPointCloudRt(const pcl::PointCloud<pcl::PointXYZI>& src,
                                    pcl::PointCloud<pcl::PointXYZI>& dst,
                                    const Eigen::Matrix3f& R,
@@ -59,8 +59,7 @@ bool SuperLIO::set_realtime_priority(int priority)
   return true;
 }
 
-
-
+/// 平面拟合：用 N 个点拟合平面 ax+by+cz+1=0，返回法向量系数 abcd
 inline bool calc_plane_coeff(const int N, const std::array<V3, 5>& points, std::array<double, 4>& abcd)
 {
   Eigen::Vector3d normvec;
@@ -111,6 +110,7 @@ inline bool compute_error(
 }
 
 
+/// 初始化：创建 IVox 地图、ESKF 滤波器、加载参数
 void SuperLIO::init(){
   ivox_.reset(new OctVoxMapType(OctVoxMapType::Options{g_ivox_resolution, g_ivox_capacity}));
   kf_.reset(new ESKF());
@@ -277,6 +277,7 @@ void SuperLIO::stateWaitMapInit()
   }
 }
 
+/// 主处理流程：状态机驱动，依次执行 IMU 传播→去畸变→观测→更新地图→输出
 void SuperLIO::process(){
   if(paused_.load()){
     return;
@@ -384,6 +385,7 @@ bool SuperLIO::map_init(){
 }
 
 
+/// 核心处理：IMU 前向传播 + 点云去畸变 + ESKF 观测更新
 void SuperLIO::stateProcess(){
   frame_num_++;
   
@@ -434,8 +436,11 @@ void SuperLIO::stateProcess(){
 }
 
 
+/// 缓存当前帧数据：变换点云到世界系，存入 cace_map_ 供后续输出和建图
 void SuperLIO::caceData(){
   if(!g_save_map) return;
+
+  auto state = kf_->GetNavState();
 
   if(g_lio_only_undistort){
     if(g_if_filter){
@@ -448,7 +453,6 @@ void SuperLIO::caceData(){
     if(last_transformed_world_pc_ && !last_transformed_world_pc_->empty()){
       *world_pc_ = *last_transformed_world_pc_;
     }else{
-      auto state = kf_->GetNavState();
       const Eigen::Matrix3f Rf = state.R.R_.cast<float>();
       const Eigen::Vector3f tf = state.p.cast<float>();
       if(g_if_filter){
@@ -951,7 +955,8 @@ inline double get_cpu_time_seconds() {
          usage.ru_stime.tv_sec + usage.ru_stime.tv_usec / 1e6;
 }
 
-
+/// IMU 前向传播 + 点云去畸变：在 IMU 采样点间线性插值旋转/平移，
+/// 将每个点校正到扫描结束时刻的位姿，使用小角度近似避免 SLERP 开销
 void SuperLIO::Propagation_Undistort(){
   propagate_states_.clear();
   propagate_states_.emplace_back(kf_->GetDynamicState());
@@ -1089,7 +1094,8 @@ void SuperLIO::DownSampleOnly(){
   }
 }
 
-
+/// ESKF 观测更新：对每个点查询 IVox 邻域、拟合平面、构建雅可比，
+/// 迭代更新状态；首次迭代直接顺序访问，后续迭代使用紧凑索引
 void SuperLIO::Observe(){
   size_t ptsize = ds_undistort_->size();
   
@@ -1218,6 +1224,7 @@ void SuperLIO::Observe(){
 }
 
 
+/// 更新 IVox 地图：将去畸变后的点云添加到地图中
 void SuperLIO::UpdateMap() {
   const size_t ptsize = ds_undistort_->size();
   if (ptsize == 0) return;
@@ -1238,6 +1245,7 @@ void SuperLIO::UpdateMap() {
 }
 
 
+/// 输出当前帧结果：位姿、点云、TF，发布到 ROS 话题
 void SuperLIO::Output(){
   auto state = kf_->GetNavState();
   

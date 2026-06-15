@@ -51,6 +51,9 @@ namespace LI2Sup{
   extern float g_maxrange2;
   extern int   g_filter_rate;
   extern int   g_filter_offset; // 余数偏移，用于下次采样的起始点
+  /// 启用对称振荡采样：filter_rate>1 时交替从两端选取偏移，
+  /// 覆盖更均匀，避免始终遗漏同一组点
+  extern bool  g_enable_filter_offset;
   extern bool  g_enable_downsample;
   extern float g_voxel_fliter_size;
   extern bool  g_intensity_filter_en;
@@ -125,7 +128,8 @@ namespace LI2Sup{
   extern double g_init_px, g_init_py, g_init_pz, g_init_roll, g_init_pitch, g_init_yaw;
 
   /// observe
-  extern float g_plane_fit_threshold;
+  /// 平面拟合阈值，值越大保留的有效点越多（退化场景下可适当放宽）
+  extern double g_plane_fit_threshold;
 
   /// for dynamic point removal
   extern bool g_dynamic_removal_enable;
@@ -148,6 +152,10 @@ namespace LI2Sup{
   /// Fast TF: publish tf (world->imu, world->base_footprint) at IMU frequency
   /// to reduce tf latency for downstream consumers.
   extern bool g_fast_tf;
+
+  /// 使用本地时钟 (this->now()) 替代话题原始时间戳，
+  /// 适用于传感器时钟不同步的场景
+  extern bool g_use_local_timestamp;
 
 }
 

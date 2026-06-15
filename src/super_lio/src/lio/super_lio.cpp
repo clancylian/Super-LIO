@@ -1296,38 +1296,40 @@ void SuperLIO::Observe(){
       }
 
       if(cond_num > g_degeneracy_threshold){
-        M6d H_V_inv = M6d::Zero();
+        // Directly construct truncated Hessian from eigen-decomposition
+        // instead of pseudo-inverse → inverse round-trip (numerically fragile).
+        M6d H_trunc = M6d::Zero();
         int degenerate_axes_count = 0;
-        double eig_floor = max_eig / g_degeneracy_threshold;
 
         for(int i = 0; i < 6; ++i){
-          if(eigenvalues(i) < eig_floor){
-            // Degenerate direction: floor the eigenvalue instead of
-            // truncating to zero.  Retains LiDAR constraint at the
-            // noise floor so IMU bias cannot drift freely.
-            H_V_inv(i, i) = 1.0 / eig_floor;
+          if(eigenvalues(i) < max_eig / g_degeneracy_threshold){
+            // Degenerate direction: zero-out LiDAR contribution,
+            // rely on IMU preintegration and Tikhonov floor.
             degenerate_axes_count++;
           } else {
-            // Healthy direction: retain high-precision LIO update.
-            H_V_inv(i, i) = 1.0 / eigenvalues(i);
+            // Healthy direction: retain LiDAR information.
+            H_trunc += eigenvalues(i) * eigenvectors.col(i) * eigenvectors.col(i).transpose();
           }
         }
 
-        // Reconstruct the modified Hessian from the floored eigen-space.
-        M6d HTVH_modified_inv = eigenvectors * H_V_inv * eigenvectors.transpose();
-        sum_HTVH = HTVH_modified_inv.inverse();
+        // Tikhonov regularization adds a uniform floor across ALL directions
+        // to prevent covariance singularity in degenerate axes.
+        // λ = g_tikhonov_lambda * avg_eig; at 0.001 this is ~0.1% of mean eigenvalue,
+        // enough for numerical safety without injecting fake geometric constraints.
+        double tikhonov = g_tikhonov_lambda * sum_HTVH.trace() / 6.0;
+        sum_HTVH = H_trunc + tikhonov * M6d::Identity();
 
         static auto last_degen_log = std::chrono::steady_clock::now();
         auto now_degen = std::chrono::steady_clock::now();
         if(std::chrono::duration<double>(now_degen - last_degen_log).count() > 2.0){
           // Print eigenvectors of ALL degenerate directions
-          LOG(WARNING) << "[Degeneracy] FLOORED eig_floor=" << eig_floor
+          LOG(WARNING) << "[Degeneracy] TRUNCATED tikhonov=" << g_tikhonov_lambda
                        << " cond=" << cond_num
                        << " deg_axes=" << degenerate_axes_count
                        << " effect_pts=" << total_valid
                        << " eig=[ " << eigenvalues.transpose() << " ]";
           for(int i = 0; i < 6; ++i){
-            if(eigenvalues(i) < eig_floor){
+            if(eigenvalues(i) < max_eig / g_degeneracy_threshold){
               V6d deg_vec = eigenvectors.col(i);
               LOG(WARNING) << "  deg_axis[" << i << "] eigval=" << eigenvalues(i)
                            << " vec=[ " << deg_vec.transpose() << " ] (Rxyz,Txyz)";

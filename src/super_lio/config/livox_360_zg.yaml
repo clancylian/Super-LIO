@@ -178,8 +178,9 @@
     # 典型值 100，越大越敏感
     lio.degeneracy.threshold: 100.0
     # Tikhonov正则化强度，lambda * trace(H)/6 加到 Hessian 对角
-    # 0.1 = 添加 10% Hessian 量级的对角正则化
-    lio.degeneracy.tikhonov_lambda: 1.0
+    # 退化方向 LiDAR 贡献为 0，Tikhonov 提供最低约束防止协方差奇异
+    # 0.001 = 0.1% 均值特征值，足够数值稳定且不会注入假几何约束
+    lio.degeneracy.tikhonov_lambda: 0.001
 
     # 连续跳过观测更新的最大帧数，超限时重置IMU偏置（防止贴墙场景恶性漂移）
     lio.bias_reset_skip_threshold: 50

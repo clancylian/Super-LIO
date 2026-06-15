@@ -970,6 +970,13 @@ void SuperLIO::Propagation_Undistort(){
   std::size_t ptsize = raw_pc->points.size();
   scan_undistort_full_->resize(ptsize); 
 
+  // Monotonic scan: point cloud offset_time is typically monotonically
+  // increasing (LiDAR scan order), so we cache the last match position
+  // and only advance forward — O(N+M) instead of O(N log M) binary search.
+  // Fallback to binary search if monotonicity is violated.
+  const size_t M = propagate_states_.size();
+  size_t j = 0; // cached position into propagate_states_
+
   for (size_t idx = 0; idx < ptsize; ++idx) {
     auto& pt_full = scan_undistort_full_->points[idx];
     const auto& pt = raw_pc->points[idx];
@@ -982,24 +989,38 @@ void SuperLIO::Propagation_Undistort(){
       continue;
     }
 
-    auto it = std::lower_bound(
-        propagate_states_.cbegin(), propagate_states_.cend(), query_time,
-        [](const DynamicState& s, double t) { return s.time < t; });
-    decltype(it) match_iter, match_iter_n;
-    if (it == propagate_states_.cbegin()) {
-      match_iter = match_iter_n = it;
+    // Advance j while next state is still before query_time
+    while (j + 1 < M && propagate_states_[j + 1].time < query_time) ++j;
+
+    // If monotonicity violated (query_time < current state time), fallback
+    size_t match_idx, match_idx_n;
+    if (j + 1 < M && propagate_states_[j].time <= query_time) {
+      match_idx = j;
+      match_idx_n = j + 1;
     } else {
-      match_iter = std::prev(it);
-      match_iter_n = it;
+      // Fallback: binary search for this point
+      auto it = std::lower_bound(
+          propagate_states_.cbegin(), propagate_states_.cend(), query_time,
+          [](const DynamicState& s, double t) { return s.time < t; });
+      if (it == propagate_states_.cbegin()) {
+        match_idx = match_idx_n = 0;
+      } else {
+        match_idx = std::prev(it) - propagate_states_.cbegin();
+        match_idx_n = match_idx + 1;
+      }
+      j = match_idx; // reset cache
     }
-    double dt = match_iter_n->time - match_iter->time;
-    double tau = query_time - match_iter->time;
+
+    const auto& match_state = propagate_states_[match_idx];
+    const auto& match_state_n = propagate_states_[match_idx_n];
+    double dt = match_state_n.time - match_state.time;
+    double tau = query_time - match_state.time;
     double s   = tau / dt;
-    M3 R_h = match_iter->R;
-    M3 R_t = match_iter_n->R;
-    V3 p_h = match_iter->p;
-    V3 v_h = match_iter->v;
-    V3 acc_t = match_iter_n->a;
+    M3 R_h = match_state.R;
+    M3 R_t = match_state_n.R;
+    V3 p_h = match_state.p;
+    V3 v_h = match_state.v;
+    V3 acc_t = match_state_n.a;
     M3 R_i = Quat(R_h).slerp(s, Quat(R_t)).toRotationMatrix();
     V3 p_i = p_h + v_h * tau + 0.5 * acc_t * tau * tau;
     V3 t_ei = p_i - T_end_t;

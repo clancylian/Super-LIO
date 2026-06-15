@@ -121,6 +121,8 @@ protected:
   int pcd_index_ = -1;
   bool observe_skipped_ = false;
   int consecutive_skip_count_ = 0;
+  bool bias_reset_triggered_ = false;      // set after soft (bias-only) reset
+  int  post_reset_skip_count_ = 0;         // consecutive skips after soft reset
 
   Timer time_record_;
 

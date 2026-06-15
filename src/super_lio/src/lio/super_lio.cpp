@@ -1,4 +1,23 @@
 
+/**
+ * @file super_lio.cpp
+ * @brief Super-LIO 核心实现文件
+ * 
+ * Super-LIO 是一个基于 LiDAR-Inertial Odometry (LIO) 的激光-惯性里程计系统。
+ * 核心特性包括：
+ * - 紧耦合的激光-惯性融合
+ * - 支持双雷达融合
+ * - 实时退化检测与正则化
+ * - 自适应观测权重
+ * - 多线程并行处理
+ * 
+ * 主要处理流程：
+ * 1. 初始化阶段（KF初始化 -> 地图初始化）
+ * 2. 主处理循环（IMU传播 -> 点云去畸变 -> 降采样 -> 观测更新 -> 地图更新）
+ * 3. 输出线程（发布位姿、点云等）
+ * 4. 地图保存线程
+ */
+
 #include "lio/super_lio.h"
 
 #include <sys/resource.h>
@@ -20,6 +39,14 @@ using namespace BASIC;
 
 namespace LI2Sup{
 
+/**
+ * @brief 设置实时调度优先级
+ * 
+ * 将当前线程设置为 SCHED_FIFO 实时调度策略，用于确保 LIO 处理的实时性。
+ * 
+ * @param priority 优先级值（通常 1-99）
+ * @return true 设置成功，false 设置失败
+ */
 bool SuperLIO::set_realtime_priority(int priority)
 {
   struct sched_param param;
@@ -81,15 +108,39 @@ inline bool calc_plane_coeff(const int N, const std::array<V3, 5>& points, std::
 }
 
 
+/**
+ * @brief 计算点到平面的误差
+ * 
+ * 计算给定点到拟合平面的有符号距离误差。
+ * 
+ * @param abcd 平面系数 [a, b, c, d]
+ * @param point 三维点坐标
+ * @param length 点到原点的距离（用于验证有效性）
+ * @param error 输出的误差值（点到平面的有符号距离）
+ * @return true 误差有效，false 误差过大（可能是离群点）
+ */
 inline bool compute_error(
   const std::array<double, 4>& abcd, const V3& point, 
   const float length, scalar& error)
 {
+  // 计算点到平面的有符号距离
   error = abcd[0] * point[0] + abcd[1] * point[1] + abcd[2] * point[2] + abcd[3];
+  
+  // 距离校验：排除距离过大的点（防止数值不稳定）
   return length > 81 * error * error;
 }
 
 
+/**
+ * @brief SuperLIO 初始化函数
+ * 
+ * 初始化核心组件：
+ * - 八叉树体素地图（ivox_ 和 ivox_rear_）
+ * - ESKF 扩展卡尔曼滤波器
+ * - 点云容器
+ * - 线程配置
+ * - 地图保存相关初始化
+ */
 void SuperLIO::init(){
   ivox_.reset(new OctVoxMapType(OctVoxMapType::Options{g_ivox_resolution, g_ivox_capacity}));
   ivox_rear_.reset(new OctVoxMapType(OctVoxMapType::Options{g_ivox_resolution, g_ivox_capacity}));
@@ -224,7 +275,12 @@ SuperLIO::~SuperLIO(){
   }
 }
 
-
+/**
+ * @brief 状态机：等待 KF 初始化
+ * 
+ * 等待 IMU 数据积累足够后进行重力对齐和初始姿态估计。
+ * 如果是 downsample_only 模式，直接跳过初始化。
+ */
 void SuperLIO::stateWaitKFInit()
 {
   // downsample_only mode: skip KF and map initialization
@@ -241,9 +297,15 @@ void SuperLIO::stateWaitKFInit()
   }
 }
 
+/**
+ * @brief 状态机：等待地图初始化
+ * 
+ * 等待足够的激光帧积累以构建初始地图。
+ * 如果是 downsample_only 或 lio_only_undistort 模式，直接跳过。
+ */
 void SuperLIO::stateWaitMapInit()
 {
-  // downsample_only mode should not reach here, but add check for safety
+  // safety check: downsample_only 模式不应到达这里
   if(g_downsample_only){
     kf_->init_ = true;
     state_fn_ = &SuperLIO::stateProcess;
@@ -251,12 +313,15 @@ void SuperLIO::stateWaitMapInit()
     return;
   }
   
+  // lio_only_undistort 模式：跳过地图初始化
   if(g_lio_only_undistort){
     kf_->init_ = true;
     state_fn_ = &SuperLIO::stateProcess;
     LOG(INFO) << GREEN << " ---> [SuperLIO]: Undistort-only mode, skip map init" << RESET;
     return;
   }
+  
+  // 尝试地图初始化
   if (map_init()) {
     kf_->init_ = true;
     state_fn_ = &SuperLIO::stateProcess;
@@ -264,6 +329,14 @@ void SuperLIO::stateWaitMapInit()
   }
 }
 
+/**
+ * @brief 主处理函数
+ * 
+ * 每帧激光数据的主入口，负责：
+ * 1. 数据同步
+ * 2. 状态机调度
+ * 3. 设置实时优先级
+ */
 void SuperLIO::process(){
   if(paused_.load()){
     return;
@@ -283,34 +356,55 @@ void SuperLIO::process(){
 }
 
 
+/**
+ * @brief ESKF 初始化（重力对齐）
+ * 
+ * 通过累积 IMU 数据进行重力矢量估计和初始姿态计算：
+ * 1. 累积足够的 IMU 数据（至少50帧，约0.5秒@100Hz）
+ * 2. 计算平均加速度矢量作为重力估计
+ * 3. 计算平均陀螺仪偏置
+ * 4. 通过重力对齐计算初始旋转矩阵
+ * 
+ * @return true 初始化成功，false 需要更多 IMU 数据
+ */
 bool SuperLIO::kf_init(){
   static int imu_cout = 0;
   static V3 mean_gyro = V3::Zero();
   static V3 mean_acce = V3::Zero();
 
+  // 累积 IMU 数据
   for(auto& imu: measures_.imu){
     imu_cout ++;
+    // 增量式均值计算
     mean_gyro += (imu.gyr - mean_gyro) / imu_cout;
     mean_acce += (imu.acc - mean_acce) / imu_cout;
   }
 
-  /// 100 Hz for 1 second.
+  // 需要至少 50 帧 IMU 数据（约 0.5 秒 @ 100Hz）
   if(imu_cout < 50){
     return false;
   }
 
+  // 计算重力矢量（取反并归一化）
   V3 gravity = - mean_acce * g_gravity_norm / mean_acce.norm();
+  
+  // 根据配置选择参考重力方向
   V3 ref_gravity;
   switch(g_ref_gravity_axis) {
-    case 0:  ref_gravity = V3(g_gravity_norm, 0, 0); break;   // +X
-    case 1:  ref_gravity = V3(0, g_gravity_norm, 0); break;   // +Y
+    case 0:  ref_gravity = V3(g_gravity_norm, 0, 0); break;   // +X 轴（用于 Z 轴朝前安装）
+    case 1:  ref_gravity = V3(0, g_gravity_norm, 0); break;   // +Y 轴
     case 2:  
-    default: ref_gravity = V3(0, 0, -g_gravity_norm); break;  // -Z (default)
+    default: ref_gravity = V3(0, 0, -g_gravity_norm); break;  // -Z 轴（默认）
   }
+  
+  // 通过两个向量计算初始旋转矩阵（重力对齐）
   M3 init_rot = Quat::FromTwoVectors(gravity, ref_gravity).toRotationMatrix();
+  
+  // 提取偏航角（绕 Z 轴的旋转）
   V3 n = init_rot.col(0);
   double yaw = atan2(n(1), n(0));
 
+  // 输出初始化结果日志
   LOG(INFO) << GREEN << " ---> [SuperLIO]: Gravity Alignment Results:" << RESET;
   LOG(INFO) << GREEN << "      Mean Acceleration: [" << mean_acce.transpose() << "]" << RESET;
   LOG(INFO) << GREEN << "      Gravity Norm: " << g_gravity_norm << RESET;
@@ -319,10 +413,11 @@ bool SuperLIO::kf_init(){
   LOG(INFO) << GREEN << "      Yaw Angle: " << yaw * 180.0 / M_PI << " degrees" << RESET;
   LOG(INFO) << GREEN << "      IMU Scale: " << g_gravity_norm / mean_acce.norm() << RESET;
 
+  // 计算偏航逆旋转（绕 Z 轴）
   M3 R_yaw_inv = Eigen::AngleAxis<scalar>(-yaw, V3::UnitZ()).toRotationMatrix(); 
 
-  // init_rot represents the IMU orientation after gravity alignment (level orientation).
-  // Perform LiDAR leveling correction, then transform the orientation into the robot frame.
+  // 组合旋转：LiDAR 偏航补偿 -> 偏航逆旋转 -> 重力对齐旋转
+  // 最终将 IMU 坐标系对齐到机器人坐标系
   M3 rot = g_lidar_robo_yaw * R_yaw_inv * init_rot;  
 
   ESKF::Options options;
@@ -345,14 +440,24 @@ bool SuperLIO::kf_init(){
 }
 
 
+/**
+ * @brief 地图初始化
+ * 
+ * 累积初始激光帧构建初始八叉树地图。
+ * 需要至少 3 帧激光数据（约 0.15 秒 @ 20Hz）以确保覆盖足够的环境区域（>70%）。
+ * 
+ * @return true 地图初始化完成，false 需要更多激光帧
+ */
 bool SuperLIO::map_init(){
   frame_num_++;
 
   std::size_t ptsize = measures_.lidar.pc->size();
   points_world_v3_.resize(ptsize);
 
+  // 获取系统初始位姿
   const SE3 transform = sys_init_pose_;
 
+  // 并行将点云从局部坐标系转换到世界坐标系
   tbb::parallel_for(
     tbb::blocked_range<size_t>(0, ptsize),
     [&](const tbb::blocked_range<size_t>& r) {
@@ -364,13 +469,18 @@ bool SuperLIO::map_init(){
     }
   );
 
+  // 根据雷达类型选择目标地图
   bool is_rear = (current_lidar_frame_ == "__rear__");
   auto& ivox = (g_share_ivox || !is_rear) ? ivox_ : ivox_rear_;
+  
+  // 插入到八叉树地图
   ivox->insert(points_world_v3_);
   ivox_rear_->insert(points_world_v3_);
+  
+  // 更新最后观测时间
   kf_->SetLastObsTime(measures_.lidar.end_time);
 
-  // 20 Hz for 1.0 seconds. Integral coverage area > 70%
+  // 需要至少 3 帧（约 0.15 秒 @ 20Hz），覆盖区域 > 70%
   if(frame_num_ > 3){
     g_flg_map_init = false;
     return true;
@@ -379,6 +489,18 @@ bool SuperLIO::map_init(){
 }
 
 
+/**
+ * @brief 状态机：主处理循环
+ * 
+ * 完整的 LIO 处理流程：
+ * 1. IMU 传播与点云去畸变
+ * 2. 后雷达点云坐标转换（如果是后雷达）
+ * 3. 点云降采样
+ * 4. 观测更新（点到平面匹配）
+ * 5. 地图更新
+ * 6. 输出
+ * 7. 数据缓存（用于保存）
+ */
 void SuperLIO::stateProcess(){
   frame_num_++;
   
@@ -961,6 +1083,11 @@ void SuperLIO::saveMap(){
 }
 
 
+/**
+ * @brief 获取 CPU 时间（秒）
+ * 
+ * @return 当前进程的用户态和系统态 CPU 时间总和
+ */
 inline double get_cpu_time_seconds() {
   struct rusage usage;
   getrusage(RUSAGE_SELF, &usage);
@@ -969,13 +1096,25 @@ inline double get_cpu_time_seconds() {
 }
 
 
+/**
+ * @brief IMU 传播和点云去畸变
+ * 
+ * 核心功能：
+ * 1. 使用 IMU 数据进行状态传播
+ * 2. 根据传播的状态对激光点云进行运动去畸变
+ * 3. 支持双雷达模式下的状态回退（后雷达处理时）
+ * 
+ * 去畸变算法：
+ * - 对每个激光点，根据其时间戳在 IMU 传播状态序列中插值
+ * - 使用四元数 SLERP 插值旋转
+ * - 使用二阶泰勒展开插值位置
+ */
 void SuperLIO::Propagation_Undistort(){
   propagate_states_.clear();
 
-  // For rear lidar: the ESKF may have advanced beyond the scan start due to
-  // the immediately-preceding front-lidar Observe(). Without rewinding,
-  // ESKF::Predict would reject all IMUs before the front-scan end_time,
-  // leaving propagate_states_ with a single entry and causing missing sectors.
+  // 后雷达特殊处理：由于前一帧前雷达的 Observe() 已经推进了 ESKF，
+  // 如果不回退状态，ESKF::Predict 会拒绝所有在前雷达结束时间之前的 IMU，
+  // 导致 propagate_states_ 只有单个条目，造成扇区缺失
   bool is_rear = (current_lidar_frame_ == "__rear__");
   auto saved_state = kf_->GetSysState();
   if(is_rear && !measures_.imu.empty()){
@@ -985,16 +1124,22 @@ void SuperLIO::Propagation_Undistort(){
     kf_->SetX(rewind_state);
   }
 
+  // 保存初始状态
   propagate_states_.emplace_back(kf_->GetDynamicState());
+  
+  // 设置观测时间（用于 IMU 预测）
   kf_->SetObsTime(measures_.lidar.end_time);
+  
+  // IMU 状态传播
   for (auto &imu : measures_.imu) {
     kf_->Predict(imu);
     propagate_states_.emplace_back(kf_->GetDynamicState());
   }
 
+  // 获取传播后的最终位姿
   const SE3 T_end = kf_->GetSE3();
 
-  // Restore ESKF so Observe/UpdateMap start from the correct pre-frame state
+  // 恢复 ESKF 状态，确保 Observe/UpdateMap 从正确的帧前状态开始
   if(is_rear){
     kf_->SetX(saved_state);
   }
@@ -1236,13 +1381,82 @@ void SuperLIO::Observe(){
     // and the ESKF can diverge. Rely on IMU propagation only for this frame.
     if(total_valid < g_min_effect_pts){
       observe_skipped_ = true;
-      consecutive_skip_count_++;
+
+      // Two-tier recovery track:
+      //   consecutive_skip_count_ → soft (bias-only) reset
+      //   post_reset_skip_count_   → hard (map-clear + reinit) reset
+      // If the bias reset already triggered and valid_pts is still near-zero,
+      // the pose has drifted too far from the stale map for matching to
+      // ever recover.  Hard reset clears the map and re-aligns orientation
+      // from current IMU gravity to break the dead loop.
+      bool critically_dead = (total_valid <= g_min_effect_pts / 5);
+      if(bias_reset_triggered_ && critically_dead){
+        post_reset_skip_count_++;
+      } else if(!bias_reset_triggered_){
+        consecutive_skip_count_++;
+      }
+
       static int skip_count = 0;
       if(++skip_count % 20 == 0){
         LOG(WARNING) << "[Observe] SKIP update: valid_pts=" << total_valid
-                     << " < min=" << g_min_effect_pts;
+                     << " < min=" << g_min_effect_pts
+                     << (bias_reset_triggered_ ? " (post-reset)" : "");
       }
 
+      // --- Hard recovery: map clear + ESKF reinit ---
+      // Triggered when bias reset failed to bring valid_pts back above
+      // the noise floor.  Clears stale IVox map and reinitialises ESKF
+      // orientation from current IMU gravity (position preserved).
+      int hard_threshold = std::max(5, g_bias_reset_skip_threshold / 4);
+      if(bias_reset_triggered_ && post_reset_skip_count_ > hard_threshold){
+        LOG(WARNING) << "[Recovery] HARD RESET: clearing IVox map + reinit ESKF from IMU gravity";
+        ivox_->clear();
+        if(!g_share_ivox) ivox_rear_->clear();
+
+        // Gravity alignment from current frame's IMU measurements
+        {
+          V3 gyro_sum = V3::Zero(), acc_sum = V3::Zero();
+          int imu_n = 0;
+          for(auto& imu : measures_.imu){
+            gyro_sum += imu.gyr;
+            acc_sum += imu.acc;
+            imu_n++;
+          }
+          if(imu_n > 0){
+            V3 gyro_mean = gyro_sum / imu_n;
+            V3 acc_mean = acc_sum / imu_n;
+            V3 gravity = -acc_mean * g_gravity_norm / acc_mean.norm();
+            V3 ref_grav;
+            switch(g_ref_gravity_axis) {
+              case 0: ref_grav = V3(g_gravity_norm, 0, 0); break;
+              case 1: ref_grav = V3(0, g_gravity_norm, 0); break;
+              default: ref_grav = V3(0, 0, -g_gravity_norm); break;
+            }
+            M3 R_grav = Quat::FromTwoVectors(gravity, ref_grav).toRotationMatrix();
+            V3 n = R_grav.col(0);
+            double yaw = atan2(n(1), n(0));
+            M3 R_yaw_inv = Eigen::AngleAxis<scalar>(-yaw, V3::UnitZ()).toRotationMatrix();
+            M3 rot = g_lidar_robo_yaw * R_yaw_inv * R_grav;
+
+            float imu_scale = g_gravity_norm / acc_mean.norm();
+            auto state = kf_->GetSysState();
+            state.R = SO3(rot);
+            state.bg = V3::Zero();
+            state.ba = V3::Zero();
+            kf_->SetX(state);
+            LOG(WARNING) << "[Recovery] ESKF reinitialized: orientation from IMU gravity, position kept, bias=0";
+          }
+        }
+
+        bias_reset_triggered_ = false;
+        post_reset_skip_count_ = 0;
+        consecutive_skip_count_ = 0;
+        HTVH = M6::Zero();
+        HTVr = V6::Zero();
+        return;
+      }
+
+      // --- Soft recovery: bias-only reset (existing behaviour) ---
       // When the robot is against a wall / in a featureless environment,
       // consecutive skips cause IMU bias to drift unchecked, deforming
       // undistorted point clouds into lines. Once the bias drifts, even
@@ -1255,6 +1469,8 @@ void SuperLIO::Observe(){
         state.ba = zero_bias;
         kf_->SetX(state);
         LOG(WARNING) << "[Observe] Consecutive skips exceeds threshold — IMU bias reset to zero";
+        bias_reset_triggered_ = true;
+        post_reset_skip_count_ = 0;
         consecutive_skip_count_ = 0;
       }
 
@@ -1262,7 +1478,10 @@ void SuperLIO::Observe(){
       HTVr = V6::Zero();
       return;
     }
+    // valid update: reset all recovery trackers
     consecutive_skip_count_ = 0;
+    bias_reset_triggered_ = false;
+    post_reset_skip_count_ = 0;
 
     // Degeneracy detection: eigen-space truncation (projection).
     // Instead of blind Tikhonov regularization, we decompose the Hessian

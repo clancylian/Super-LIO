@@ -639,7 +639,7 @@ void ROSWrapper::imuHandler(const sensor_msgs::msg::Imu::SharedPtr msg){
       tf_msg.transform.translation.y = imu_state.p(1);
       tf_msg.transform.translation.z = imu_state.p(2);
 
-      Eigen::Quaterniond q(imu_state.R);
+      Eigen::Quaterniond q(imu_state.R.cast<double>());
       tf_msg.transform.rotation.x = q.x();
       tf_msg.transform.rotation.y = q.y();
       tf_msg.transform.rotation.z = q.z();

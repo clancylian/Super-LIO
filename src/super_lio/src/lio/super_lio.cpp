@@ -1110,19 +1110,108 @@ inline double get_cpu_time_seconds() {
  * - 使用二阶泰勒展开插值位置
  */
 void SuperLIO::Propagation_Undistort(){
+  // 后雷达需要前雷达的 propagate_states_ 来做时间窗口重叠段（早于 ESKF
+  // 当前时间的扫描点）的正确插值。在 clear() 之前先保存。
+  bool is_rear = (current_lidar_frame_ == "__rear__");
+  std::vector<DynamicState> front_traj;
+  if(is_rear){
+    front_traj = std::move(propagate_states_);
+  }
+
   propagate_states_.clear();
 
-  // 后雷达特殊处理：由于前一帧前雷达的 Observe() 已经推进了 ESKF，
-  // 如果不回退状态，ESKF::Predict 会拒绝所有在前雷达结束时间之前的 IMU，
-  // 导致 propagate_states_ 只有单个条目，造成扇区缺失
-  bool is_rear = (current_lidar_frame_ == "__rear__");
+  // 后雷达特殊处理：前雷达的 Observe() 已经推进了 ESKF 到前雷达结束时刻之后，
+  // 此时 ESKF 状态包含前扫描全程的 IMU 积分 + 观测更新。后雷达扫描和前雷达有
+  // 时间交叠——交叠段的 IMU 已被前雷达 Predict 消耗。
+  //
+  // 如果回退 timestamp 重新 Predict，从更新后的状态出发会造成双重积分 → 去畸变
+  // 错位 → 前/后观测矛盾 → TF 震荡。
+  //
+  // 正确做法：复用前雷达的 propagate_states_（交叠段状态），仅对前雷达扫描
+  // 结束后的新 IMU 做增量 Predict。
   auto saved_state = kf_->GetSysState();
-  if(is_rear && !measures_.imu.empty()){
-    auto rewind_state = saved_state;
-    rewind_state.timestamp = measures_.imu.front().secs - 0.001;
-    if(rewind_state.timestamp < 0.0) rewind_state.timestamp = 0.0;
-    kf_->SetX(rewind_state);
+
+  if(is_rear){
+    // Combine: front_lidar's propagate trajectory (overlapping IMU window)
+    //        + new IMU predictions (after front scan end).
+    // This gives every rear scan point proper motion interpolation,
+    // without double-integrating any IMU data.
+    propagate_states_ = std::move(front_traj);
+
+    kf_->SetObsTime(measures_.lidar.end_time);
+
+    int predicted = 0;
+    for (auto &imu : measures_.imu) {
+      if (imu.secs <= saved_state.timestamp + 1e-6) {
+        continue;  // already in front_traj
+      }
+      kf_->Predict(imu);
+      propagate_states_.emplace_back(kf_->GetDynamicState());
+      predicted++;
+    }
+
+    const SE3 T_end = kf_->GetSE3();
+
+    // Restore ESKF — Observe / UpdateMap start from correct pre-rear state
+    kf_->SetX(saved_state);
+
+    const M3  R_inv = T_end.R_.transpose();
+    const V3  T_end_t = T_end.t_;
+    const double start_time = measures_.lidar.start_time;
+    auto& raw_pc = measures_.lidar.pc;
+
+    std::size_t ptsize = raw_pc->points.size();
+    scan_undistort_full_->resize(ptsize);
+
+    tbb::parallel_for(
+    tbb::blocked_range<size_t>(0, ptsize),
+    [&](const tbb::blocked_range<size_t>& r) {
+      M3 R_h, R_t; V3 p_h, v_h, acc_t, w_t;
+      for (size_t idx = r.begin(); idx < r.end(); ++idx) {
+        auto& pt_full = scan_undistort_full_->points[idx];
+        const auto& pt = raw_pc->points[idx];
+        pt_full.intensity = pt.intensity;
+        double query_time = start_time + pt.offset_time;
+        if (query_time > propagate_states_.back().time) {
+          pt_full.x = pt.x;
+          pt_full.y = pt.y;
+          pt_full.z = pt.z;
+          continue;
+        }
+
+        auto it = std::lower_bound(
+            propagate_states_.cbegin(), propagate_states_.cend(), query_time,
+            [](const DynamicState& s, double t) { return s.time < t; });
+        decltype(it) match_iter, match_iter_n;
+        if (it == propagate_states_.cbegin()) {
+          match_iter = match_iter_n = it;
+        } else {
+          match_iter = std::prev(it);
+          match_iter_n = it;
+        }
+        double dt = match_iter_n->time - match_iter->time;
+        double tau = query_time - match_iter->time;
+        double s   = (dt > 1e-12) ? tau / dt : 0.0;
+        R_h = match_iter->R;
+        R_t = match_iter_n->R;
+        p_h = match_iter->p;
+        v_h = match_iter->v;
+        acc_t = match_iter_n->a;
+        w_t = match_iter_n->w;
+        M3 R_i = Quat(R_h).slerp(s, Quat(R_t)).toRotationMatrix();
+        V3 p_i = p_h + v_h * tau + 0.5 * acc_t * tau * tau;
+        V3 t_ei = p_i - T_end_t;
+        V3 raw(pt.x, pt.y, pt.z);
+        V3 eigen_point = R_inv * (R_i * raw + t_ei);
+        pt_full.x = eigen_point[0];
+        pt_full.y = eigen_point[1];
+        pt_full.z = eigen_point[2];
+      }
+    });
+    return;
   }
+
+  // ============== 前雷达 / 单雷达（原始路径不变） ==============
 
   // 保存初始状态
   propagate_states_.emplace_back(kf_->GetDynamicState());
@@ -1138,11 +1227,6 @@ void SuperLIO::Propagation_Undistort(){
 
   // 获取传播后的最终位姿
   const SE3 T_end = kf_->GetSE3();
-
-  // 恢复 ESKF 状态，确保 Observe/UpdateMap 从正确的帧前状态开始
-  if(is_rear){
-    kf_->SetX(saved_state);
-  }
 
   const M3  R_inv = T_end.R_.transpose();
   const V3  T_end_t = T_end.t_;
@@ -1168,7 +1252,6 @@ void SuperLIO::Propagation_Undistort(){
         continue;
       }
 
-      // Binary search on time-ordered IMU states: O(log N) vs O(N) linear scan
       auto it = std::lower_bound(
           propagate_states_.cbegin(), propagate_states_.cend(), query_time,
           [](const DynamicState& s, double t) { return s.time < t; });

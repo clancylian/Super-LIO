@@ -73,7 +73,7 @@ inline bool calc_plane_coeff(const int N, const std::array<V3, 5>& points, std::
   for (int i = 0; i < N; ++i) {
     const V3& p = points[i];
     auto dist = abcd[0] * p(0) + abcd[1] * p(1) + abcd[2] * p(2) + abcd[3];
-    if (std::abs(dist) > 0.1) return false;
+    if (std::abs(dist) > g_plane_fit_threshold) return false;
   }
   return true;
 }

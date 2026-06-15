@@ -187,6 +187,15 @@ void LoadParamFromRos(rclcpp::Node& node)
   node.declare_parameter<double>("lio.kf.kf_quit_eps", 0.0);
   node.get_parameter("lio.kf.kf_quit_eps", g_kf_quit_eps);
 
+  // observe
+  node.declare_parameter<double>("lio.observe.plane_fit_threshold", 0.1);
+  double temp_plane_fit_threshold;
+  node.get_parameter("lio.observe.plane_fit_threshold", temp_plane_fit_threshold);
+  g_plane_fit_threshold = static_cast<float>(temp_plane_fit_threshold);
+
+  LOG(INFO) << GREEN << " ---> [Param] observe/plane_fit_threshold: "
+            << g_plane_fit_threshold << RESET;
+
   // submaps
   node.declare_parameter<double>("lio.submap.submap_resolution", 0.0);
   node.get_parameter("lio.submap.submap_resolution", g_submap_resolution);

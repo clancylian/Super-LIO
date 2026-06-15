@@ -98,6 +98,9 @@ namespace LI2Sup{
   bool g_update_map = false;
   double g_init_px, g_init_py, g_init_pz, g_init_roll, g_init_pitch, g_init_yaw;
 
+  /// observe
+  float g_plane_fit_threshold = 0.1f;
+
   /// for dynamic point removal
   bool g_dynamic_removal_enable = false;
   int  g_dynamic_removal_method = 0;

@@ -56,6 +56,10 @@
     lio.sensor.intensity_filter_en: true
     # 强度滤波阈值，低于此值的点被剔除（仅intensity_filter_en为true时生效）
     lio.sensor.intensity_min: 10.0
+    # 多线雷达线数（固态雷达设为0），full_column_interval 需要此参数
+    lio.sensor.lidar_channels: 0
+    # 每隔多少列保留完整一列（0=禁用），用于多线雷达保纵向信息
+    lio.sensor.full_column_interval: 0
     # 当地重力加速度大小(m/s²)，用于IMU初始化和重力对齐，影响定位精度
     lio.sensor.gravity_norm: 9.8066
     # IMU类型编号:
@@ -166,3 +170,7 @@
     # ======================== 单核模式 ========================
     # 是否启用单核运行模式。true: 关闭TBB并行，LIO主管线串行执行
     lio.single_core: false
+
+    # ======================== 快速TF模式 ========================
+    # 是否在IMU频率下发布tf（world->imu, world->base_footprint），降低tf延迟
+    lio.fast_tf: false

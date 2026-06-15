@@ -55,6 +55,8 @@ namespace LI2Sup{
   extern float g_voxel_fliter_size;
   extern bool  g_intensity_filter_en;
   extern float g_intensity_min;
+  extern int   g_lidar_channels;         // multi-line lidar channels (e.g. Airy=96) for full_column_interval
+  extern int   g_full_column_interval;   // keep full column every N columns, 0=disabled
 
   extern int    g_imu_type;
   extern double g_gravity_norm;
@@ -139,6 +141,10 @@ namespace LI2Sup{
   /// Single-core mode: disables all TBB parallelism in LIO pipeline,
   /// independent threads (OutputThread, SaveThread) remain unaffected.
   extern bool g_single_core;
+
+  /// Fast TF: publish tf (world->imu, world->base_footprint) at IMU frequency
+  /// to reduce tf latency for downstream consumers.
+  extern bool g_fast_tf;
 
 }
 

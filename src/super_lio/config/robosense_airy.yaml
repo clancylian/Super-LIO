@@ -23,6 +23,10 @@
     lio.sensor.voxel_fliter_size: 0.25
     lio.sensor.intensity_filter_en: false
     lio.sensor.intensity_min: 0.0
+    # 多线雷达线数（如 Airy=96），full_column_interval 需要此参数
+    lio.sensor.lidar_channels: 96
+    # 每隔多少列保留完整一列（0=禁用），用于多线雷达保纵向信息
+    lio.sensor.full_column_interval: 0
     lio.sensor.gravity_norm: 9.81
     lio.sensor.imu_type: 1
     lio.sensor.imu_na: 0.1
@@ -100,3 +104,7 @@
     # ======================== 单核模式 ========================
     # 是否启用单核运行模式。true: 关闭TBB并行，LIO主管线串行执行
     lio.single_core: false
+
+    # ======================== 快速TF模式 ========================
+    # 是否在IMU频率下发布tf（world->imu, world->base_footprint），降低tf延迟
+    lio.fast_tf: false

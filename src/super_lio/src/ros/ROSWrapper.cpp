@@ -97,6 +97,12 @@ void LoadParamFromRos(rclcpp::Node& node)
   node.declare_parameter<double>("lio.sensor.intensity_min", 0.0);
   node.get_parameter("lio.sensor.intensity_min", g_intensity_min);
 
+  node.declare_parameter<int>("lio.sensor.lidar_channels", 0);
+  node.get_parameter("lio.sensor.lidar_channels", g_lidar_channels);
+
+  node.declare_parameter<int>("lio.sensor.full_column_interval", 0);
+  node.get_parameter("lio.sensor.full_column_interval", g_full_column_interval);
+
   node.declare_parameter<double>("lio.sensor.gravity_norm", 9.81);
   node.get_parameter("lio.sensor.gravity_norm", g_gravity_norm);
 
@@ -333,6 +339,13 @@ void LoadParamFromRos(rclcpp::Node& node)
 
   LOG(INFO) << GREEN << " ---> [Param] single_core: "
             << (g_single_core ? "true" : "false") << RESET;
+
+  // ================= fast tf mode =================
+  node.declare_parameter<bool>("lio.fast_tf", false);
+  node.get_parameter("lio.fast_tf", g_fast_tf);
+
+  LOG(INFO) << GREEN << " ---> [Param] fast_tf: "
+            << (g_fast_tf ? "true" : "false") << RESET;
 
   // ================= lio only undistort mode =================
   node.declare_parameter<bool>("lio.lio_only_undistort", false);
@@ -613,6 +626,68 @@ void ROSWrapper::imuHandler(const sensor_msgs::msg::Imu::SharedPtr msg){
     odom_robo.child_frame_id = "base_link";
     pub_imu_odom_->publish(odom_imu);
     pub_robo_odom_->publish(odom_robo);
+
+    // Fast TF: publish tf at IMU frequency to reduce latency
+    if (g_fast_tf) {
+      geometry_msgs::msg::TransformStamped tf_msg;
+
+      // world -> imu
+      tf_msg.header.stamp = this->now();
+      tf_msg.header.frame_id = g_world_frame;
+      tf_msg.child_frame_id = g_imu_frame;
+      tf_msg.transform.translation.x = imu_state.p(0);
+      tf_msg.transform.translation.y = imu_state.p(1);
+      tf_msg.transform.translation.z = imu_state.p(2);
+
+      Eigen::Quaterniond q(imu_state.R);
+      tf_msg.transform.rotation.x = q.x();
+      tf_msg.transform.rotation.y = q.y();
+      tf_msg.transform.rotation.z = q.z();
+      tf_msg.transform.rotation.w = q.w();
+      tf_broadcaster_->sendTransform(tf_msg);
+
+      // world -> base_footprint
+      if (g_footprint_pub_en) {
+        geometry_msgs::msg::TransformStamped tf_footprint;
+        tf_footprint.header.stamp = this->now();
+        tf_footprint.header.frame_id = g_world_frame;
+        tf_footprint.child_frame_id = g_tf_base_footprint_frame;
+
+        tf_footprint.transform.translation.x = imu_state.p(0);
+        tf_footprint.transform.translation.y = imu_state.p(1);
+        tf_footprint.transform.translation.z = imu_state.p(2);
+
+        Eigen::Vector3f world_up;
+        if (g_ref_gravity_axis == 0)      world_up = Eigen::Vector3f(-1, 0, 0);
+        else if (g_ref_gravity_axis == 1) world_up = Eigen::Vector3f(0, -1, 0);
+        else                              world_up = Eigen::Vector3f(0, 0, 1);
+
+        Eigen::Vector3f lidar_fwd_local = Eigen::Vector3f::UnitZ();
+        Eigen::Vector3f lidar_fwd_world = q.cast<float>() * lidar_fwd_local;
+
+        Eigen::Vector3f fwd_proj = lidar_fwd_world - (lidar_fwd_world.dot(world_up)) * world_up;
+        fwd_proj.normalize();
+
+        Eigen::Vector3f foot_x = fwd_proj;
+        Eigen::Vector3f foot_z = world_up;
+        Eigen::Vector3f foot_y = foot_z.cross(foot_x);
+
+        Eigen::Matrix3f foot_mat;
+        foot_mat.col(0) = foot_x;
+        foot_mat.col(1) = foot_y;
+        foot_mat.col(2) = foot_z;
+
+        Eigen::Quaternionf q_foot(foot_mat);
+        q_foot.normalize();
+
+        tf_footprint.transform.rotation.x = q_foot.x();
+        tf_footprint.transform.rotation.y = q_foot.y();
+        tf_footprint.transform.rotation.z = q_foot.z();
+        tf_footprint.transform.rotation.w = q_foot.w();
+
+        tf_broadcaster_->sendTransform(tf_footprint);
+      }
+    }
   }
 }
 
@@ -677,6 +752,21 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
       lidar_data.pc->emplace_back(
           pt.x, pt.y, pt.z, pt.intensity, offset_time);
     }
+    // Full column retention
+    if (g_full_column_interval > 0 && g_lidar_channels > 0) {
+      int num_cols = pl_orig.size() / g_lidar_channels;
+      for (int col = 0; col < num_cols; col += g_full_column_interval) {
+        int base = col * g_lidar_channels;
+        for (int k = base; k < base + g_lidar_channels && k < (int)pl_orig.size(); ++k) {
+          if (((int)k - (int)g_filter_offset) % g_filter_rate == 0) continue;
+          auto& pt = pl_orig.points[k];
+          if (!validPoint(pt.x, pt.y, pt.z)) continue;
+          if(g_intensity_filter_en && pt.intensity < g_intensity_min) continue;
+          lidar_data.pc->emplace_back(
+              pt.x, pt.y, pt.z, pt.intensity, pt.timestamp - time_begin);
+        }
+      }
+    }
     // 更新偏移量
     if(g_filter_rate > 0) {
       g_filter_offset = (g_filter_offset + 1) % g_filter_rate;
@@ -697,6 +787,20 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
       offset_time = pt.time * 1e-6;
       lidar_data.pc->emplace_back(
           pt.x, pt.y, pt.z, 1.0, offset_time);
+    }
+    // Full column retention
+    if (g_full_column_interval > 0 && g_lidar_channels > 0) {
+      int num_cols = pl_orig.size() / g_lidar_channels;
+      for (int col = 0; col < num_cols; col += g_full_column_interval) {
+        int base = col * g_lidar_channels;
+        for (int k = base; k < base + g_lidar_channels && k < (int)pl_orig.size(); ++k) {
+          if (((int)k - (int)g_filter_offset) % g_filter_rate == 0) continue;
+          auto& pt = pl_orig.points[k];
+          if (!validPoint(pt.x, pt.y, pt.z)) continue;
+          lidar_data.pc->emplace_back(
+              pt.x, pt.y, pt.z, 1.0, pt.time * 1e-6);
+        }
+      }
     }
     // 更新偏移量
     if(g_filter_rate > 0) {
@@ -720,6 +824,21 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
       lidar_data.pc->emplace_back(
           pt.x, pt.y, pt.z, pt.intensity, pt.time);
     }
+    // Full column retention
+    if (g_full_column_interval > 0 && g_lidar_channels > 0) {
+      int num_cols = pl_orig.size() / g_lidar_channels;
+      for (int col = 0; col < num_cols; col += g_full_column_interval) {
+        int base = col * g_lidar_channels;
+        for (int k = base; k < base + g_lidar_channels && k < (int)pl_orig.size(); ++k) {
+          if (((int)k - (int)g_filter_offset) % g_filter_rate == 0) continue;
+          auto& pt = pl_orig.points[k];
+          if (!validPoint(pt.x, pt.y, pt.z)) continue;
+          if(g_intensity_filter_en && pt.intensity < g_intensity_min) continue;
+          lidar_data.pc->emplace_back(
+              pt.x, pt.y, pt.z, pt.intensity, pt.time);
+        }
+      }
+    }
     // 更新偏移量
     if(g_filter_rate > 0) {
       g_filter_offset = (g_filter_offset + 1) % g_filter_rate;
@@ -742,6 +861,21 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
       lidar_data.pc->emplace_back(
           pt.x, pt.y, pt.z, pt.intensity, offset_time);
     }
+    // Full column retention
+    if (g_full_column_interval > 0 && g_lidar_channels > 0) {
+      int num_cols = pl_orig.size() / g_lidar_channels;
+      for (int col = 0; col < num_cols; col += g_full_column_interval) {
+        int base = col * g_lidar_channels;
+        for (int k = base; k < base + g_lidar_channels && k < (int)pl_orig.size(); ++k) {
+          if (((int)k - (int)g_filter_offset) % g_filter_rate == 0) continue;
+          auto& pt = pl_orig.points[k];
+          if (!validPoint(pt.x, pt.y, pt.z)) continue;
+          if(g_intensity_filter_en && pt.intensity < g_intensity_min) continue;
+          lidar_data.pc->emplace_back(
+              pt.x, pt.y, pt.z, pt.intensity, pt.t * 1e-9);
+        }
+      }
+    }
     // 更新偏移量
     if(g_filter_rate > 0) {
       g_filter_offset = (g_filter_offset + 1) % g_filter_rate;
@@ -763,6 +897,21 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
       offset_time = static_cast<double>(i) / pl_orig.size() * 0.1;
       lidar_data.pc->emplace_back(
           pt.x, pt.y, pt.z, pt.intensity, offset_time);
+    }
+    // Full column retention
+    if (g_full_column_interval > 0 && g_lidar_channels > 0) {
+      int num_cols = pl_orig.size() / g_lidar_channels;
+      for (int col = 0; col < num_cols; col += g_full_column_interval) {
+        int base = col * g_lidar_channels;
+        for (int k = base; k < base + g_lidar_channels && k < (int)pl_orig.size(); ++k) {
+          if (((int)k - (int)g_filter_offset) % g_filter_rate == 0) continue;
+          auto& pt = pl_orig.points[k];
+          if (!validPoint(pt.x, pt.y, pt.z)) continue;
+          if(g_intensity_filter_en && pt.intensity < g_intensity_min) continue;
+          lidar_data.pc->emplace_back(
+              pt.x, pt.y, pt.z, pt.intensity, static_cast<double>(k) / pl_orig.size() * 0.1);
+        }
+      }
     }
     // 更新偏移量
     if(g_filter_rate > 0) {
@@ -807,6 +956,24 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
         lidar_data.pc->emplace_back(
             ros_x, ros_y, ros_z, pt.intensity, offset_time);
       }
+      // Full column retention
+      if (g_full_column_interval > 0 && g_lidar_channels > 0) {
+        int num_cols = plsize / g_lidar_channels;
+        for (int col = 0; col < num_cols; col += g_full_column_interval) {
+          int base = col * g_lidar_channels;
+          for (int k = base; k < base + g_lidar_channels && k < plsize; ++k) {
+            if ((k - (int)g_filter_offset) % g_filter_rate == 0) continue;
+            auto& pt = pl_orig.points[k];
+            float ros_x = pt.x;
+            float ros_y = pt.y;
+            float ros_z = pt.z;
+            if (!validPoint(ros_x, ros_y, ros_z)) continue;
+            if(g_intensity_filter_en && pt.intensity < g_intensity_min) continue;
+            lidar_data.pc->emplace_back(
+                ros_x, ros_y, ros_z, pt.intensity, pt.timestamp - min_time);
+          }
+        }
+      }
       // 更新偏移量
       if(g_filter_rate > 0) {
         g_filter_offset = (g_filter_offset + 1) % g_filter_rate;
@@ -829,6 +996,24 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
         if(g_intensity_filter_en && pt.intensity < g_intensity_min) continue;
         lidar_data.pc->emplace_back(
             ros_x, ros_y, ros_z, pt.intensity, 0.0);
+      }
+      // Full column retention
+      if (g_full_column_interval > 0 && g_lidar_channels > 0) {
+        int num_cols = plsize / g_lidar_channels;
+        for (int col = 0; col < num_cols; col += g_full_column_interval) {
+          int base = col * g_lidar_channels;
+          for (int k = base; k < base + g_lidar_channels && k < plsize; ++k) {
+            if ((k - (int)g_filter_offset) % g_filter_rate == 0) continue;
+            auto& pt = pl_orig.points[k];
+            float ros_x = pt.x;
+            float ros_y = pt.y;
+            float ros_z = pt.z;
+            if (!validPoint(ros_x, ros_y, ros_z)) continue;
+            if(g_intensity_filter_en && pt.intensity < g_intensity_min) continue;
+            lidar_data.pc->emplace_back(
+                ros_x, ros_y, ros_z, pt.intensity, 0.0);
+          }
+        }
       }
       // 更新偏移量
       if(g_filter_rate > 0) {

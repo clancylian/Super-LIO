@@ -38,6 +38,8 @@ namespace LI2Sup{
   float  g_voxel_fliter_size;
   bool   g_intensity_filter_en = false;
   float  g_intensity_min = 0.0f;
+  int    g_lidar_channels = 0;
+  int    g_full_column_interval = 0;
 
   int    g_imu_type;
   double g_gravity_norm = 9.7946;
@@ -112,5 +114,8 @@ namespace LI2Sup{
 
   /// Single-core mode
   bool g_single_core = false;
+
+  /// Fast tf
+  bool g_fast_tf = false;
 
 }

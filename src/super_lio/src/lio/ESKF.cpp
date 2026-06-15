@@ -74,6 +74,19 @@ void ESKF::SetX(const SysState& x) {
   fw_v_ = v_;
 }
 
+void ESKF::SetMainState(const SysState& x) {
+  // Only update main ESKF state (R/p/v/bg/ba).
+  // Leaves fw_R_/fw_p_/fw_v_ untouched so that the IMU-rate fast_tf
+  // forward-prediction chain is not disrupted.
+  last_imu_time_ = x.timestamp;
+  current_time_ = last_imu_time_;
+  R_ = x.R;
+  p_ = x.p;
+  v_ = x.v;
+  bg_ = x.bg;
+  ba_ = x.ba;
+}
+
 
 void ESKF::BuildNoise(const Options& options) {
   double et = options.gyro_var_;

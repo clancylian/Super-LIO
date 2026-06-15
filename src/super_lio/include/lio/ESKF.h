@@ -77,6 +77,7 @@ public:
   void SetLastObsTime(const double obs_time) { last_obs_time_ = obs_time; }
 
   void SetX(const SysState& x);
+  void SetMainState(const SysState& x);  // R/p/v/bg/ba only, fw_* untouched
 
   void SetCov(const COV& cov){ P_ = cov; }
 

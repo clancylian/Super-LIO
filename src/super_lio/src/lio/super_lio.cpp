@@ -1152,8 +1152,10 @@ void SuperLIO::Propagation_Undistort(){
 
     const SE3 T_end = kf_->GetSE3();
 
-    // Restore ESKF — Observe / UpdateMap start from correct pre-rear state
-    kf_->SetX(saved_state);
+    // Restore ESKF main state — Observe / UpdateMap start from correct pre-rear state.
+    // Use SetMainState (not SetX) to avoid resetting the forward-prediction chain
+    // (fw_R_/fw_p_/fw_v_) used by fast_tf in imuHandler.
+    kf_->SetMainState(saved_state);
 
     const M3  R_inv = T_end.R_.transpose();
     const V3  T_end_t = T_end.t_;

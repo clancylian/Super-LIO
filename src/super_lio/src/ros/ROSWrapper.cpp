@@ -865,83 +865,71 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
 
   double max_offset_time = 0.0;
 
-  for (size_t i = g_filter_offset; i < num_points; i += g_filter_rate) {
-    float x = read_float(i, off_x);
-    float y = read_float(i, off_y);
-    float z = read_float(i, off_z);
-    if (!validPoint(x, y, z)) continue;
-
-    float intensity = has_intensity ? read_float(i, off_intensity) : 1.0f;
-    if (g_intensity_filter_en && intensity < g_intensity_min) continue;
-
-    // Compute offset_time based on lidar type and time field
+  // Helper: read offset_time for point at index k
+  auto read_offset_time = [&](size_t k) -> double {
     if (has_time) {
       switch (time_type) {
-        case 2: { // FLOAT64 (HESAI timestamp - absolute)
-          double t; memcpy(&t, data_ptr + i * point_step + off_time, sizeof(double));
-          offset_time = t - time_begin;
-          break;
-        }
-        case 1: { // FLOAT32 (Velodyne time - relative to scan start; OUSTER - absolute)
-          float t; memcpy(&t, data_ptr + i * point_step + off_time, sizeof(float));
-          if (g_lidar_type == LID_TYPE::VELO16 || g_lidar_type == LID_TYPE::VELO32) {
-            offset_time = static_cast<double>(t); // already relative
-          } else {
-            offset_time = static_cast<double>(t) - time_begin;
-          }
-          break;
-        }
-        case 3: { // UINT32 (NCLT time - microseconds, absolute)
-          uint32_t t; memcpy(&t, data_ptr + i * point_step + off_time, sizeof(uint32_t));
-          offset_time = t * 1e-6 - time_begin;
-          break;
-        }
-        case 4: { // UINT64 (OUSTER t - nanoseconds, absolute)
-          uint64_t t; memcpy(&t, data_ptr + i * point_step + off_time, sizeof(uint64_t));
-          offset_time = t * 1e-9 - time_begin;
-          break;
-        }
-        default:
-          offset_time = 0.0;
+        case 2: { double t; memcpy(&t, data_ptr + k * point_step + off_time, sizeof(double)); return t - time_begin; }
+        case 1: { float t; memcpy(&t, data_ptr + k * point_step + off_time, sizeof(float));
+          if (g_lidar_type == LID_TYPE::VELO16 || g_lidar_type == LID_TYPE::VELO32) return static_cast<double>(t);
+          else return static_cast<double>(t) - time_begin; }
+        case 3: { uint32_t t; memcpy(&t, data_ptr + k * point_step + off_time, sizeof(uint32_t)); return t * 1e-6 - time_begin; }
+        case 4: { uint64_t t; memcpy(&t, data_ptr + k * point_step + off_time, sizeof(uint64_t)); return t * 1e-9 - time_begin; }
+        default: return 0.0;
       }
     } else {
-      // No time field: synthesize from index (GAZEBO-like)
-      offset_time = static_cast<double>(i) / num_points * 0.1;
+      return static_cast<double>(k) / num_points * 0.1;
     }
+  };
 
-    lidar_data.pc->emplace_back(x, y, z, intensity, offset_time);
-    if (offset_time > max_offset_time) max_offset_time = offset_time;
-  }
+  // Helper: try to add point at index k, returns true if added
+  auto try_add_point = [&](size_t k) {
+    float x = read_float(k, off_x);
+    float y = read_float(k, off_y);
+    float z = read_float(k, off_z);
+    if (!validPoint(x, y, z)) return false;
+    float intensity = has_intensity ? read_float(k, off_intensity) : 1.0f;
+    if (g_intensity_filter_en && intensity < g_intensity_min) return false;
+    double ot = read_offset_time(k);
+    lidar_data.pc->emplace_back(x, y, z, intensity, ot);
+    if (ot > max_offset_time) max_offset_time = ot;
+    return true;
+  };
 
-  // Full column retention
-  if (g_full_column_interval > 0 && g_lidar_channels > 0) {
-    int num_cols = num_points / g_lidar_channels;
-    for (int col = 0; col < num_cols; col += g_full_column_interval) {
-      int base = col * g_lidar_channels;
-      for (int k = base; k < base + g_lidar_channels && k < (int)num_points; ++k) {
-        if (((int)k - (int)g_filter_offset) % g_filter_rate == 0) continue;
-        float x = read_float(k, off_x);
-        float y = read_float(k, off_y);
-        float z = read_float(k, off_z);
-        if (!validPoint(x, y, z)) continue;
-        float intensity = has_intensity ? read_float(k, off_intensity) : 1.0f;
-        if (g_intensity_filter_en && intensity < g_intensity_min) continue;
+  const bool full_col_en = (g_full_column_interval > 0 && g_lidar_channels > 0);
 
-        if (has_time) {
-          switch (time_type) {
-            case 2: { double t; memcpy(&t, data_ptr + k * point_step + off_time, sizeof(double)); offset_time = t - time_begin; break; }
-            case 1: { float t; memcpy(&t, data_ptr + k * point_step + off_time, sizeof(float));
-              if (g_lidar_type == LID_TYPE::VELO16 || g_lidar_type == LID_TYPE::VELO32) offset_time = t;
-              else offset_time = static_cast<double>(t) - time_begin; break; }
-            case 3: { uint32_t t; memcpy(&t, data_ptr + k * point_step + off_time, sizeof(uint32_t)); offset_time = t * 1e-6 - time_begin; break; }
-            case 4: { uint64_t t; memcpy(&t, data_ptr + k * point_step + off_time, sizeof(uint64_t)); offset_time = t * 1e-9 - time_begin; break; }
-            default: offset_time = 0.0;
-          }
-        } else {
-          offset_time = static_cast<double>(k) / num_points * 0.1;
+  if (full_col_en) {
+    // Column-aware iteration: process column by column to maintain time order.
+    // For retained columns (every g_full_column_interval), emit all channels;
+    // for other columns, only emit points matching filter_rate.
+    size_t num_cols = num_points / g_lidar_channels;
+    size_t col_idx = g_filter_offset / g_lidar_channels;
+    size_t in_col_offset = g_filter_offset % g_lidar_channels;
+    for (; col_idx < num_cols; ++col_idx) {
+      size_t col_start = col_idx * g_lidar_channels;
+      if (col_idx % (size_t)g_full_column_interval == 0) {
+        // Retained column: emit all channels
+        for (size_t k = col_start; k < col_start + g_lidar_channels && k < num_points; ++k) {
+          try_add_point(k);
         }
-        lidar_data.pc->emplace_back(x, y, z, intensity, offset_time);
+        in_col_offset = 0; // reset for next column
+      } else {
+        // Normal column: emit only filter_rate-selected points
+        for (size_t k = col_start + in_col_offset; k < col_start + g_lidar_channels && k < num_points; k += g_filter_rate) {
+          try_add_point(k);
+        }
+        in_col_offset = 0; // subsequent columns start from channel 0
       }
+    }
+    // Remaining points beyond full columns
+    size_t remainder_start = num_cols * g_lidar_channels;
+    for (size_t k = remainder_start + in_col_offset; k < num_points; k += g_filter_rate) {
+      try_add_point(k);
+    }
+  } else {
+    // No full column retention: simple filter_rate iteration
+    for (size_t i = g_filter_offset; i < num_points; i += g_filter_rate) {
+      try_add_point(i);
     }
   }
 

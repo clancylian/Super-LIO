@@ -970,10 +970,9 @@ void SuperLIO::Propagation_Undistort(){
   std::size_t ptsize = raw_pc->points.size();
   scan_undistort_full_->resize(ptsize); 
 
-  // Monotonic scan: point cloud offset_time is typically monotonically
-  // increasing (LiDAR scan order), so we cache the last match position
-  // and only advance forward — O(N+M) instead of O(N log M) binary search.
-  // Fallback to binary search if monotonicity is violated.
+  // Monotonic scan: point cloud offset_time is monotonically increasing
+  // (LiDAR scan order, guaranteed by ROSWrapper column-aware iteration),
+  // so cache the last match position and only advance forward — O(N+M).
   const size_t M = propagate_states_.size();
   size_t j = 0; // cached position into propagate_states_
 
@@ -992,27 +991,8 @@ void SuperLIO::Propagation_Undistort(){
     // Advance j while next state is still before query_time
     while (j + 1 < M && propagate_states_[j + 1].time < query_time) ++j;
 
-    // If monotonicity violated (query_time < current state time), fallback
-    size_t match_idx, match_idx_n;
-    if (j + 1 < M && propagate_states_[j].time <= query_time) {
-      match_idx = j;
-      match_idx_n = j + 1;
-    } else {
-      // Fallback: binary search for this point
-      auto it = std::lower_bound(
-          propagate_states_.cbegin(), propagate_states_.cend(), query_time,
-          [](const DynamicState& s, double t) { return s.time < t; });
-      if (it == propagate_states_.cbegin()) {
-        match_idx = match_idx_n = 0;
-      } else {
-        match_idx = std::prev(it) - propagate_states_.cbegin();
-        match_idx_n = match_idx + 1;
-      }
-      j = match_idx; // reset cache
-    }
-
-    const auto& match_state = propagate_states_[match_idx];
-    const auto& match_state_n = propagate_states_[match_idx_n];
+    const auto& match_state = propagate_states_[j];
+    const auto& match_state_n = propagate_states_[j + 1];
     double dt = match_state_n.time - match_state.time;
     double tau = query_time - match_state.time;
     double s   = tau / dt;

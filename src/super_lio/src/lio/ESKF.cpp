@@ -236,6 +236,7 @@ bool ESKF::UpdateObserve(ESKF::ObsFunc obs) {
   V3  g_pred = g_;
 
   M18 P_pred = P_;
+  M18 Y_pred = P_pred.inverse();  // Pre-compute information matrix (one 18x18 inverse)
 
   M6 HTVH;
   V6 HTVr;
@@ -276,9 +277,15 @@ bool ESKF::UpdateObserve(ESKF::ObsFunc obs) {
     M18 HTRH = M18::Zero();
     HTRH.template block<6,6>(0,0) = HTVH;
 
-    // information form
-    M18 A = Pk.inverse() + HTRH;
-    Qk = A.inverse();
+    // Information form update (single 18x18 inverse per iteration):
+    //   Yk = G_prior^{-T} * Y_pred * G_prior^{-1} + HTRH
+    //   Qk = Yk^{-1}
+    // G_prior is identity except top-left 3x3 = J_prior,
+    // so G_prior^{-1} is identity with top-left 3x3 = J_prior^{-1}.
+    M18 G_inv = M18::Identity();
+    G_inv.template block<3,3>(0,0) = J_prior.inverse();
+    M18 Yk = G_inv.transpose() * Y_pred * G_inv + HTRH;
+    Qk = Yk.inverse();
 
     V18 b = V18::Zero();
     b.template head<6>() = HTVr;

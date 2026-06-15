@@ -970,11 +970,51 @@ void SuperLIO::Propagation_Undistort(){
   std::size_t ptsize = raw_pc->points.size();
   scan_undistort_full_->resize(ptsize); 
 
-  // Monotonic scan: point cloud offset_time is monotonically increasing
-  // (LiDAR scan order, guaranteed by ROSWrapper column-aware iteration),
-  // so cache the last match position and only advance forward — O(N+M).
+  // Pre-compute per-interval constants to avoid redundant work.
+  // For each IMU interval [j, j+1], precompute:
+  //   R_end_inv_R_h = R_inv * R_h          (3x3, shared by all points in interval)
+  //   t_base = R_inv * (p_h - T_end_t)     (3x1, shared)
+  //   v_base = R_inv * v_h                  (3x1, shared)
+  //   acc_base = R_inv * acc_t              (3x1, shared)
+  //   omega_body = R_h^T * omega            (3x1, body-frame angular velocity)
+  //   dt_inv = 1.0 / dt                     (scalar, shared)
+  // Then for each point with parameter tau:
+  //   R_i ≈ R_h * Exp(omega * tau) ≈ R_h * (I + hat(omega * tau))  [small angle]
+  //   R_inv * R_i ≈ R_end_inv_R_h * (I + hat(omega_body * tau))
+  //   p_i = p_h + v_h * tau + 0.5 * acc_t * tau^2
+  //   result = R_inv * (R_i * raw + p_i - T_end_t)
+  //          = R_end_inv_R_h * raw + R_end_inv_R_h * hat(omega_body * tau) * raw
+  //            + t_base + v_base * tau + 0.5 * acc_base * tau^2
+  // The hat(omega_body*tau)*raw = omega_body*tau × raw, which is cheap.
   const size_t M = propagate_states_.size();
-  size_t j = 0; // cached position into propagate_states_
+
+  struct IntervalCache {
+    M3 R_end_inv_R_h;    // R_inv * R_h
+    V3 t_base;           // R_inv * (p_h - T_end_t)
+    V3 v_base;           // R_inv * v_h
+    V3 acc_base;         // R_inv * acc_t * 0.5
+    V3 omega_body;       // body-frame angular velocity for small-angle Exp
+    double dt_inv;       // 1.0 / dt
+    double time_start;   // interval start time
+    double time_end;     // interval end time
+  };
+
+  std::vector<IntervalCache> interval_cache(M - 1);
+  for (size_t j = 0; j + 1 < M; ++j) {
+    const auto& s0 = propagate_states_[j];
+    const auto& s1 = propagate_states_[j + 1];
+    auto& ic = interval_cache[j];
+    ic.R_end_inv_R_h = R_inv * s0.R;
+    ic.t_base = R_inv * (s0.p - T_end_t);
+    ic.v_base = R_inv * s0.v;
+    ic.acc_base = 0.5 * R_inv * s1.a;
+    ic.omega_body = s0.w;  // body-frame angular velocity
+    ic.dt_inv = 1.0 / (s1.time - s0.time);
+    ic.time_start = s0.time;
+    ic.time_end = s1.time;
+  }
+
+  size_t j = 0; // cached interval index
 
   for (size_t idx = 0; idx < ptsize; ++idx) {
     auto& pt_full = scan_undistort_full_->points[idx];
@@ -988,24 +1028,20 @@ void SuperLIO::Propagation_Undistort(){
       continue;
     }
 
-    // Advance j while next state is still before query_time
-    while (j + 1 < M && propagate_states_[j + 1].time < query_time) ++j;
+    // Advance j while next interval starts before query_time
+    while (j + 1 < M - 1 && interval_cache[j + 1].time_start < query_time) ++j;
 
-    const auto& match_state = propagate_states_[j];
-    const auto& match_state_n = propagate_states_[j + 1];
-    double dt = match_state_n.time - match_state.time;
-    double tau = query_time - match_state.time;
-    double s   = tau / dt;
-    M3 R_h = match_state.R;
-    M3 R_t = match_state_n.R;
-    V3 p_h = match_state.p;
-    V3 v_h = match_state.v;
-    V3 acc_t = match_state_n.a;
-    M3 R_i = Quat(R_h).slerp(s, Quat(R_t)).toRotationMatrix();
-    V3 p_i = p_h + v_h * tau + 0.5 * acc_t * tau * tau;
-    V3 t_ei = p_i - T_end_t;
+    const auto& ic = interval_cache[j];
+    double tau = query_time - ic.time_start;
+
     V3 raw(pt.x, pt.y, pt.z);
-    V3 eigen_point = R_inv * (R_i * raw + t_ei);
+    // result = R_end_inv_R_h * raw + R_end_inv_R_h * (omega_body * tau × raw)
+    //        + t_base + v_base * tau + acc_base * tau^2
+    V3 Rrot_raw = ic.R_end_inv_R_h * raw;
+    V3 omega_cross_raw = ic.omega_body.cross(raw) * tau;
+    V3 eigen_point = Rrot_raw + ic.R_end_inv_R_h * omega_cross_raw
+                   + ic.t_base + ic.v_base * tau + ic.acc_base * tau * tau;
+
     pt_full.x = eigen_point[0];
     pt_full.y = eigen_point[1];
     pt_full.z = eigen_point[2];
@@ -1062,7 +1098,7 @@ void SuperLIO::Observe(){
   _lengths.resize(ptsize);
 
   effect_knn_num_ = ptsize;
-  std::iota(effect_knn_idxs_.begin(), effect_knn_idxs_.begin() + ptsize, 0);
+  // Don't iota effect_knn_idxs_ yet — first iteration uses direct indexing
 
   for (size_t i = 0; i < ptsize; ++i) {
     const auto& point_body_pcl = ds_undistort_->points[i];
@@ -1082,12 +1118,12 @@ void SuperLIO::Observe(){
     V6d sum_HTVr = V6d::Zero();
     KNNHeapType top_K;
 
-    for (size_t r_s = 0; r_s < effect_knn_num_; ++r_s) {
-      int idx = effect_knn_idxs_[r_s];
-      V3& point_body = points_body_v3_[idx];
-      V3 point_world = pose * point_body;
+    if (iter_num == 0) {
+      // First iteration: direct sequential access, no indirect indexing
+      for (size_t idx = 0; idx < ptsize; ++idx) {
+        V3& point_body = points_body_v3_[idx];
+        V3 point_world = pose * point_body;
 
-      if(!need_converge){
         top_K.reset();
         ivox_->getTopK(point_world, top_K);
         if(top_K.count < 4){
@@ -1097,42 +1133,83 @@ void SuperLIO::Observe(){
         }
         effect_knn_mask_[idx] = true;
         effect_mask_[idx] = calc_plane_coeff(top_K.count, top_K.points_, abcd_vec_[idx]);
-      }
+        if(!effect_mask_[idx]) continue;
 
-      if(!effect_mask_[idx]) continue;
+        auto& abcd = abcd_vec_[idx];
+        scalar error;
+        effect_mask_[idx] = compute_error(abcd, point_world, _lengths[idx], error);
+        if(!effect_mask_[idx]) continue;
 
-      auto& abcd = abcd_vec_[idx];
-      scalar error;
-      effect_mask_[idx] = compute_error(abcd, point_world, _lengths[idx], error);
-      if(!effect_mask_[idx]) continue;
-      
-      {
         V3d normvec(abcd[0], abcd[1], abcd[2]);
         V3d nb = R_transpose * normvec;
         V3d point_body_d = point_body.cast<double>();
         V6d J;
         J.head<3>() = point_body_d.cross(nb);
         J.tail<3>() = normvec;
-  
+
         sum_HTVH += J * 1000 * J.transpose();
         sum_HTVr -= J * 1000 * error;
+      }
+
+      // Build compact index array for subsequent iterations
+      int _effect_knn_num = 0;
+      for (size_t i = 0; i < ptsize; ++i) {
+        if(!effect_knn_mask_[i]) continue;
+        effect_knn_idxs_[_effect_knn_num] = i;
+        _effect_knn_num++;
+      }
+      effect_knn_num_ = _effect_knn_num;
+    } else {
+      // Subsequent iterations: use compacted indirect index
+      for (size_t r_s = 0; r_s < effect_knn_num_; ++r_s) {
+        int idx = effect_knn_idxs_[r_s];
+        V3& point_body = points_body_v3_[idx];
+        V3 point_world = pose * point_body;
+
+        if(!need_converge){
+          top_K.reset();
+          ivox_->getTopK(point_world, top_K);
+          if(top_K.count < 4){
+            effect_mask_[idx] = false;
+            effect_knn_mask_[idx] = false;
+            continue;
+          }
+          effect_knn_mask_[idx] = true;
+          effect_mask_[idx] = calc_plane_coeff(top_K.count, top_K.points_, abcd_vec_[idx]);
+        }
+
+        if(!effect_mask_[idx]) continue;
+
+        auto& abcd = abcd_vec_[idx];
+        scalar error;
+        effect_mask_[idx] = compute_error(abcd, point_world, _lengths[idx], error);
+        if(!effect_mask_[idx]) continue;
+
+        V3d normvec(abcd[0], abcd[1], abcd[2]);
+        V3d nb = R_transpose * normvec;
+        V3d point_body_d = point_body.cast<double>();
+        V6d J;
+        J.head<3>() = point_body_d.cross(nb);
+        J.tail<3>() = normvec;
+
+        sum_HTVH += J * 1000 * J.transpose();
+        sum_HTVr -= J * 1000 * error;
+      }
+
+      if(!need_converge) {
+        int _effect_knn_num = 0;
+        for(size_t i = 0; i < effect_knn_num_; ++i){
+          int idx = effect_knn_idxs_[i];
+          if(!effect_knn_mask_[idx]) continue;
+          effect_knn_idxs_[_effect_knn_num] = idx;
+          _effect_knn_num++;
+        }
+        effect_knn_num_ = _effect_knn_num;
       }
     }
 
     HTVH = sum_HTVH.cast<scalar>();
     HTVr = sum_HTVr.cast<scalar>();
-
-    if(need_converge) return;
-
-    int _effect_knn_num = 0;
-    for(size_t i = 0; i < effect_knn_num_; ++i){
-      int idx = effect_knn_idxs_[i];
-      if(!effect_knn_mask_[idx]) continue;
-      effect_knn_idxs_[_effect_knn_num] = idx;
-      _effect_knn_num++;
-    }
-
-    effect_knn_num_ = _effect_knn_num;
 
     iter_num++;
   });

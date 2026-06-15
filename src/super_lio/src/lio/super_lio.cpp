@@ -1298,12 +1298,14 @@ void SuperLIO::Observe(){
       if(cond_num > g_degeneracy_threshold){
         M6d H_V_inv = M6d::Zero();
         int degenerate_axes_count = 0;
+        double eig_floor = max_eig / g_degeneracy_threshold;
 
         for(int i = 0; i < 6; ++i){
-          if(eigenvalues(i) < max_eig / g_degeneracy_threshold){
-            // Degenerate direction: truncate (project out) the LiDAR
-            // observation so that IMU preintegration drives this axis.
-            H_V_inv(i, i) = 0.0;
+          if(eigenvalues(i) < eig_floor){
+            // Degenerate direction: floor the eigenvalue instead of
+            // truncating to zero.  Retains LiDAR constraint at the
+            // noise floor so IMU bias cannot drift freely.
+            H_V_inv(i, i) = 1.0 / eig_floor;
             degenerate_axes_count++;
           } else {
             // Healthy direction: retain high-precision LIO update.
@@ -1311,23 +1313,21 @@ void SuperLIO::Observe(){
           }
         }
 
-        // Reconstruct the modified Hessian from the truncated eigen-space.
-        M6d HTVH_pseudo_inv = eigenvectors * H_V_inv * eigenvectors.transpose();
-
-        // Mild Tikhonov damping for numerical safety only.
-        sum_HTVH = HTVH_pseudo_inv.inverse()
-                   + g_tikhonov_lambda * sum_HTVH.trace() / 6.0 * M6d::Identity();
+        // Reconstruct the modified Hessian from the floored eigen-space.
+        M6d HTVH_modified_inv = eigenvectors * H_V_inv * eigenvectors.transpose();
+        sum_HTVH = HTVH_modified_inv.inverse();
 
         static auto last_degen_log = std::chrono::steady_clock::now();
         auto now_degen = std::chrono::steady_clock::now();
         if(std::chrono::duration<double>(now_degen - last_degen_log).count() > 2.0){
           // Print eigenvectors of ALL degenerate directions
-          LOG(WARNING) << "[Degeneracy] TRUNCATED cond=" << cond_num
+          LOG(WARNING) << "[Degeneracy] FLOORED eig_floor=" << eig_floor
+                       << " cond=" << cond_num
                        << " deg_axes=" << degenerate_axes_count
                        << " effect_pts=" << total_valid
                        << " eig=[ " << eigenvalues.transpose() << " ]";
           for(int i = 0; i < 6; ++i){
-            if(eigenvalues(i) < max_eig / g_degeneracy_threshold){
+            if(eigenvalues(i) < eig_floor){
               V6d deg_vec = eigenvectors.col(i);
               LOG(WARNING) << "  deg_axis[" << i << "] eigval=" << eigenvalues(i)
                            << " vec=[ " << deg_vec.transpose() << " ] (Rxyz,Txyz)";

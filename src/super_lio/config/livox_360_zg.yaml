@@ -173,7 +173,7 @@
 
     # ======================== 退化检测与正则化 ========================
     # 是否启用观测Hessian退化检测，在病态方向上添加Tikhonov正则化
-    lio.degeneracy.detect_en: true
+    lio.degeneracy.detect_en: false
     # 退化判定阈值（条件数阈值）：min_eig * threshold < max_eig 时认为退化
     # 典型值 100，越大越敏感
     lio.degeneracy.threshold: 100.0
@@ -187,7 +187,7 @@
 
     # ======================== 自适应观测权重 ========================
     # 是否启用距离相关的观测权重（替代硬编码×1000）
-    lio.adaptive_weight.en: true
+    lio.adaptive_weight.en: false
     # 自适应权重衰减距离Sigma(米)，越大则远端点权重衰减越慢
     lio.adaptive_weight.sigma: 30.0
 

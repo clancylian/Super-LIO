@@ -22,15 +22,17 @@ inline void transformPointCloudRt(const pcl::PointCloud<pcl::PointXYZI>& src,
                                    const Eigen::Matrix3f& R,
                                    const Eigen::Vector3f& t) {
   dst.resize(src.size());
-  const float* r0 = R.data(); // row-major
+  const float* r0 = R.data(); // Eigen column-major: r0=col0, r1=col1, r2=col2
   const float* r1 = r0 + 3;
   const float* r2 = r1 + 3;
   for (size_t i = 0; i < src.size(); ++i) {
     const auto& p = src.points[i];
     auto& q = dst.points[i];
-    q.x = r0[0]*p.x + r0[1]*p.y + r0[2]*p.z + t[0];
-    q.y = r1[0]*p.x + r1[1]*p.y + r1[2]*p.z + t[1];
-    q.z = r2[0]*p.x + r2[1]*p.y + r2[2]*p.z + t[2];
+    // Eigen column-major: r0=col0, r1=col1, r2=col2
+    // R*p = col0*px + col1*py + col2*pz
+    q.x = r0[0]*p.x + r1[0]*p.y + r2[0]*p.z + t[0];
+    q.y = r0[1]*p.x + r1[1]*p.y + r2[1]*p.z + t[1];
+    q.z = r0[2]*p.x + r1[2]*p.y + r2[2]*p.z + t[2];
     q.intensity = p.intensity;
   }
   dst.header = src.header;

@@ -569,6 +569,8 @@ void ROSWrapper::setupIO(){
 
 
 void ROSWrapper::imuHandler(const sensor_msgs::msg::Imu::SharedPtr msg){
+  auto t0 = std::chrono::high_resolution_clock::now();
+  
   IMUData data;
   data.secs = g_use_local_timestamp
               ? this->now().seconds()
@@ -707,6 +709,10 @@ void ROSWrapper::imuHandler(const sensor_msgs::msg::Imu::SharedPtr msg){
         tf_broadcaster_->sendTransform(tf_footprint);
       }
     }
+    
+    auto t1 = std::chrono::high_resolution_clock::now();
+    double lat_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    recordLatency("[IMU->TF]", lat_ms);
   }
 }
 
@@ -715,6 +721,8 @@ void ROSWrapper::imuHandler(const sensor_msgs::msg::Imu::SharedPtr msg){
 void ROSWrapper::livoxHandler(const livox_ros_driver2::msg::CustomMsg::SharedPtr msg){
   if(msg->point_num < 10) return;
   LidarData lidar_data;
+  lidar_data.receive_time = std::chrono::duration<double>(
+      std::chrono::high_resolution_clock::now().time_since_epoch()).count();
   std::size_t ptsize = msg->point_num;
   lidar_data.pc.reset(new pcl::PointCloud<LI2Sup::PointXTZIT>());
   lidar_data.pc->reserve(ptsize / g_filter_rate + 1);
@@ -753,6 +761,8 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
   if(msg->data.size() < 10) return;
   
   LidarData lidar_data;
+  lidar_data.receive_time = std::chrono::duration<double>(
+      std::chrono::high_resolution_clock::now().time_since_epoch()).count();
   lidar_data.pc.reset(new pcl::PointCloud<LI2Sup::PointXTZIT>());
 
   double offset_time = 0.0;
@@ -1209,6 +1219,14 @@ void ROSWrapper::pub_processing_time(double time,
   msg.pose.position.y = mean_time;
   msg.pose.position.z = std_time;
   pub_processing_time_->publish(msg);
+}
+
+void ROSWrapper::recordLatency(const std::string& name, double latency_ms){
+  latency_timer_.Record(name, latency_ms);
+}
+
+void ROSWrapper::printLatencies(){
+  latency_timer_.PrintAll();
 }
 
 

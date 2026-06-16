@@ -58,6 +58,7 @@ protected:
     bool has_world_pc = false;
     bool has_body_pc = false;
     bool is_undistort_only = false;
+    double lidar_receive_time = 0.0;  // wall-clock time (s) when lidar msg was received
     std::string lidar_frame;
   };
 

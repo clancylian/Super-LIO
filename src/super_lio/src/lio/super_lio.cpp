@@ -4,6 +4,7 @@
 #include <sys/resource.h>
 #include <sched.h>
 #include <pthread.h>
+#include <chrono>
 #include <cstring>
 #include <fstream>
 #include <iomanip>
@@ -1271,6 +1272,7 @@ void SuperLIO::Output(){
   
   OutputData output_data;
   output_data.state = state;
+  output_data.lidar_receive_time = measures_.lidar.receive_time;
   output_data.is_undistort_only = g_lio_only_undistort || g_downsample_only;
   output_data.lidar_frame = current_lidar_frame_;
 
@@ -1415,6 +1417,14 @@ void SuperLIO::OutputThread(){
       }else{
         data_wrapper_->pub_cloud_world(data.world_pc, data.state.timestamp);
       }
+      
+      // Record end-to-end latency: lidar receive → cloud_world publish
+      if(data.lidar_receive_time > 0.0){
+        auto now_s = std::chrono::duration<double>(
+            std::chrono::high_resolution_clock::now().time_since_epoch()).count();
+        double lat_ms = (now_s - data.lidar_receive_time) * 1000.0;
+        data_wrapper_->recordLatency("[Lidar->CloudWorld]", lat_ms);
+      }
     }
     
     if(data.has_body_pc && data.body_pc){
@@ -1430,6 +1440,7 @@ void SuperLIO::OutputThread(){
 void SuperLIO::printTimeRecord(){
   if(!g_time_eva) return;
   time_record_.PrintAll();
+  data_wrapper_->printLatencies();
 }
 
 

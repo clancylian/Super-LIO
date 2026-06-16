@@ -44,6 +44,7 @@
 #include "basic/logs.h"
 #include "basic/Manifold.h"
 #include "common/ds.h"
+#include "common/timer.h"
 
 #include "lio/ESKF.h"
 #include "OctVoxMap/OctVoxMap.hpp"
@@ -90,6 +91,9 @@ public:
   void pub_cloud_body_pose( const BASIC::VV3& pc_body,
                             const NavState& state);  
   void pub_processing_time(double time, double current_time, double mean_time, double std_time);
+
+  void recordLatency(const std::string& name, double latency_ms);
+  void printLatencies();
 
   void set_global_map(const BASIC::CloudPtr& global_map);
 
@@ -151,6 +155,8 @@ private:
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr pub_path_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub_cloud_world_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub_cloud_body_;
+
+  Timer latency_timer_;
 };
 
 } // namespace END.

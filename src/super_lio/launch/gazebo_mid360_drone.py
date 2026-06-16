@@ -42,7 +42,7 @@ def generate_launch_description():
         NAV2_DEFAULT_PARAMS_FILE = '/home/cat/git/xtd2_ws/XTDrone2_ego_planner/lio/nav2_dog_slam/config/nav2_params.yaml'
         LIVOX_MID360_CONFIG_NO_TILT = ''
     
-    pkg_super_lio = get_package_share_directory('super_lio')
+    pkg_super_lio = get_package_share_directory('super_lio_lgl')
     config_yaml = os.path.join(pkg_super_lio, 'config', 'gazebo_mid360_drone.yaml')
     # rviz_config_file = os.path.join(pkg_super_lio, 'rviz', 'lio.rviz')
     
@@ -104,7 +104,7 @@ def generate_launch_description():
 
     # 创建Super-LIO生命周期节点
     super_lio_node = Node(
-        package='super_lio',
+        package='super_lio_lgl',
         executable='super_lio_node',
         name='super_lio_node',
         output='screen',

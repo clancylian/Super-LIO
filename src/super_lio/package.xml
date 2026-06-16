@@ -1,7 +1,7 @@
 <package format="3">
-  <name>super_lio</name>
+  <name>super_lio_lgl</name>
   <version>2.0.0</version>
-  <description>The super_lio package</description>
+  <description>The super_lio_lgl package</description>
   <maintainer email="lswang@mail.ecust.edu.cn">LS.Wang</maintainer>
 
   <license>GPLv3</license>

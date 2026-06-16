@@ -28,7 +28,7 @@ def generate_launch_description():
         DEFAULT_USE_SIM_TIME = False
         DEFAULT_NAMESPACE = ''
 
-    pkg_super_lio = get_package_share_directory('super_lio')
+    pkg_super_lio = get_package_share_directory('super_lio_lgl')
     config_yaml = os.path.join(pkg_super_lio, 'config', 'robosense_airy.yaml')
 
     ld = LaunchDescription()
@@ -66,7 +66,7 @@ def generate_launch_description():
     ld.add_action(declare_use_sim_time_arg)
 
     super_lio_node = Node(
-        package='super_lio',
+        package='super_lio_lgl',
         executable='super_lio_node',
         name='super_lio_node',
         output='screen',

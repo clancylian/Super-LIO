@@ -871,7 +871,7 @@ void SuperLIO::saveMap(){
       std::string pcd_folder = save_map_dir + "/PCD";
       
       std::stringstream cmd;
-      cmd << "taskset -c 0,1,2,3,4,5,6 ros2 run super_lio dynamic_remove_node"
+      cmd << "taskset -c 0,1,2,3,4,5,6 ros2 run super_lio_lgl dynamic_remove_node"
           << " --input_dir " << pcd_folder
           << " --output_dir " << pcd_folder
           << " --grid_size " << g_dynamic_removal_grid_size
@@ -1588,4 +1588,6 @@ void SuperLIO::addConstantVelocityConstraint(BASIC::M6d& HTVH, BASIC::V6d& HTVr,
   HTVr += weight * J_pose.transpose() * velocity_residual;
   
   LOG(INFO) << GREEN << " ---> [ConstantVelocity] Successfully added geometry-consistent constraint." << RESET;
+}
+
 } // namespace END.

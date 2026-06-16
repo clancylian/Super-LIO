@@ -1185,9 +1185,9 @@ void ROSWrapper::pub_cloud_body_pose(const CloudPtr& pc,
   const NavState& state)
 {
   static auto pub_cloud_body_pose_ =
-    this->create_publisher<super_lio::msg::CloudPose>(
+    this->create_publisher<super_lio_lgl::msg::CloudPose>(
         "/lio/body/cloud_pose", rclcpp::QoS(rclcpp::KeepLast(2)).best_effort().durability_volatile());
-  super_lio::msg::CloudPose cloud_pose;
+  super_lio_lgl::msg::CloudPose cloud_pose;
   pcl::toROSMsg(*pc, cloud_pose.cloud);
   cloud_pose.cloud.header.stamp = toRosTime(state.timestamp); 
   cloud_pose.pose.position.x = state.p[0];
@@ -1207,9 +1207,9 @@ void ROSWrapper::pub_cloud_world_pose(const CloudPtr& pc,
    const NavState& state)
 {
   static auto pub_cloud_world_pose_ =
-    this->create_publisher<super_lio::msg::CloudPose>(
+    this->create_publisher<super_lio_lgl::msg::CloudPose>(
         "/lio/world/cloud_pose", rclcpp::QoS(rclcpp::KeepLast(2)).best_effort().durability_volatile());
-  super_lio::msg::CloudPose cloud_pose;
+  super_lio_lgl::msg::CloudPose cloud_pose;
   pcl::toROSMsg(*pc, cloud_pose.cloud);
   cloud_pose.cloud.header.stamp = toRosTime(state.timestamp);  
   cloud_pose.pose.position.x = state.p[0];

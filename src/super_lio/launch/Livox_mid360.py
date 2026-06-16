@@ -43,7 +43,7 @@ def generate_launch_description():
         LIVOX_MID360_CONFIG_NO_TILT = ''
         DEFAULT_NAMESPACE = ''
     
-    pkg_super_lio = get_package_share_directory('super_lio')
+    pkg_super_lio = get_package_share_directory('super_lio_lgl')
     config_yaml = os.path.join(pkg_super_lio, 'config', 'livox_360.yaml')
     # rviz_config_file = os.path.join(pkg_super_lio, 'rviz', 'lio.rviz')
     
@@ -128,7 +128,7 @@ def generate_launch_description():
     ld.add_action(declare_use_sim_time_arg)
 
     super_lio_node = Node(
-        package='super_lio',
+        package='super_lio_lgl',
         executable='super_lio_node',
         name='super_lio_node',
         output='screen',

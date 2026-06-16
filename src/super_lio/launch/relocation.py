@@ -37,7 +37,7 @@ def generate_launch_description():
         NAV2_DEFAULT_PARAMS_FILE = '/home/ztl/dog_slam/LIO-SAM_MID360_ROS2_PKG/ros2/src/nav2_dog_slam/config/nav2_params.yaml'
         LIVOX_MID360_CONFIG_NO_TILT = ''
 
-    pkg_super_lio = get_package_share_directory('super_lio')
+    pkg_super_lio = get_package_share_directory('super_lio_lgl')
     config_yaml = os.path.join(pkg_super_lio, 'config', 'relocation.yaml')
     rviz_config_file = os.path.join(pkg_super_lio, 'rviz', 'relocation.rviz')
 
@@ -91,7 +91,7 @@ def generate_launch_description():
 
     # 创建Super-LIO重定位节点
     super_lio_node = Node(
-        package='super_lio',
+        package='super_lio_lgl',
         executable='relocation_node',
         name='relocation_node',
         output='screen',

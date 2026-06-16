@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(super_lio VERSION 2.0 LANGUAGES CXX C)
+project(super_lio_lgl VERSION 2.0 LANGUAGES CXX C)
 
 set(CMAKE_SUPPRESS_DEVELOPER_WARNINGS 1 CACHE STRING "Suppress developer warnings" FORCE)
 

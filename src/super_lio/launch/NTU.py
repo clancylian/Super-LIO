@@ -8,7 +8,7 @@ from launch.conditions import IfCondition
 from launch_ros.actions import Node
 
 def generate_launch_description():
-    pkg_super_lio = get_package_share_directory('super_lio')
+    pkg_super_lio = get_package_share_directory('super_lio_lgl')
     config_yaml = os.path.join(pkg_super_lio, 'config', 'NTU.yaml')
     rviz_config_file = os.path.join(pkg_super_lio, 'rviz', 'lio.rviz')
 
@@ -20,7 +20,7 @@ def generate_launch_description():
     rviz_flag = LaunchConfiguration('rviz')
 
     super_lio_node = Node(
-        package='super_lio',
+        package='super_lio_lgl',
         executable='super_lio_node',
         name='super_lio_node',
         output='screen',
@@ -31,7 +31,7 @@ def generate_launch_description():
     rviz2_node = Node(
         package='rviz2',
         executable='rviz2',
-        name='super_lio',
+        name='super_lio_lgl',
         arguments=['-d', rviz_config_file, '--ros-args', '--log-level', 'warn'],
         condition=IfCondition(rviz_flag)
     )

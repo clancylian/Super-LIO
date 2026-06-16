@@ -42,7 +42,7 @@ def generate_launch_description():
         LIVOX_MID360_CONFIG_NO_TILT = ''
         DEFAULT_NAMESPACE = ''
     
-    pkg_super_lio = get_package_share_directory('super_lio')
+    pkg_super_lio = get_package_share_directory('super_lio_lgl')
     config_yaml = os.path.join(pkg_super_lio, 'config', 'livox_360.yaml')
     # rviz_config_file = os.path.join(pkg_super_lio, 'rviz', 'lio.rviz')
     

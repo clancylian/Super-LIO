@@ -886,13 +886,11 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
         for (size_t k = col_start; k < col_start + g_lidar_channels && k < num_points; ++k) {
           try_add_point(k);
         }
-        in_col_offset = 0; // reset for next column
       } else {
         // Normal column: emit only filter_rate-selected points
         for (size_t k = col_start + in_col_offset; k < col_start + g_lidar_channels && k < num_points; k += g_filter_rate) {
           try_add_point(k);
         }
-        in_col_offset = 0; // subsequent columns start from channel 0
       }
     }
     // Remaining points beyond full columns

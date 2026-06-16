@@ -364,6 +364,33 @@ void LoadParamFromRos(rclcpp::Node& node)
   LOG(INFO) << GREEN << " ---> [Param] use_local_timestamp: "
             << (g_use_local_timestamp ? "true" : "false") << RESET;
 
+  // ================= degeneracy detection and constant velocity model =================
+  node.declare_parameter<bool>("lio.sensor.degeneracy_detection_enable", true);
+  node.get_parameter("lio.sensor.degeneracy_detection_enable", g_degeneracy_detection_enable);
+
+  node.declare_parameter<double>("lio.sensor.degeneracy_threshold", 10.0);
+  node.get_parameter("lio.sensor.degeneracy_threshold", g_degeneracy_threshold);
+
+  node.declare_parameter<bool>("lio.sensor.constant_velocity_model_enable", true);
+  node.get_parameter("lio.sensor.constant_velocity_model_enable", g_constant_velocity_model_enable);
+
+  node.declare_parameter<double>("lio.sensor.constant_velocity_weight", 1000.0);
+  node.get_parameter("lio.sensor.constant_velocity_weight", g_constant_velocity_weight);
+
+  node.declare_parameter<int>("lio.sensor.velocity_history_window", 1);
+  node.get_parameter("lio.sensor.velocity_history_window", g_velocity_history_window);
+
+  LOG(INFO) << GREEN << " ---> [Param] degeneracy_detection_enable: "
+            << (g_degeneracy_detection_enable ? "true" : "false") << RESET;
+  LOG(INFO) << GREEN << " ---> [Param] degeneracy_threshold: "
+            << g_degeneracy_threshold << RESET;
+  LOG(INFO) << GREEN << " ---> [Param] constant_velocity_model_enable: "
+            << (g_constant_velocity_model_enable ? "true" : "false") << RESET;
+  LOG(INFO) << GREEN << " ---> [Param] constant_velocity_weight: "
+            << g_constant_velocity_weight << RESET;
+  LOG(INFO) << GREEN << " ---> [Param] velocity_history_window: "
+            << g_velocity_history_window << RESET;
+
   // ================= lio only undistort mode =================
   node.declare_parameter<bool>("lio.lio_only_undistort", false);
   node.get_parameter("lio.lio_only_undistort", g_lio_only_undistort);

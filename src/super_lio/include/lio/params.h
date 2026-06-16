@@ -157,6 +157,13 @@ namespace LI2Sup{
   /// 适用于传感器时钟不同步的场景
   extern bool g_use_local_timestamp;
 
+  /// Degeneracy detection and constant velocity model
+  extern bool  g_degeneracy_detection_enable;    // 启用退化检测
+  extern double g_degeneracy_threshold;          // 退化检测阈值（最小特征值）
+  extern bool  g_constant_velocity_model_enable; // 启用常速模型约束
+  extern double g_constant_velocity_weight;      // 常速模型约束权重
+  extern int    g_velocity_history_window;       // 速度历史窗口大小（秒）
+
 }
 
 #endif

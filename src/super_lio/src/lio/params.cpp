@@ -125,4 +125,11 @@ namespace LI2Sup{
   /// 使用本地时钟替代话题原始时间戳
   bool g_use_local_timestamp = true;
 
+  /// Degeneracy detection and constant velocity model
+  bool  g_degeneracy_detection_enable = true;     // 启用退化检测
+  double g_degeneracy_threshold = 10.0;          // 退化检测阈值（最小特征值）
+  bool  g_constant_velocity_model_enable = true; // 启用常速模型约束
+  double g_constant_velocity_weight = 1000.0;    // 常速模型约束权重
+  int    g_velocity_history_window = 1;          // 速度历史窗口大小（秒）
+
 }

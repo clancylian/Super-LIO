@@ -86,6 +86,11 @@ protected:
   void caceSCPGOData();
   void ProcessCaceMap();
 
+  // Degeneracy detection and constant velocity model
+  bool checkDegeneracy(const BASIC::M6d& H_matrix);
+  void updateVelocityHistory();
+  void addConstantVelocityConstraint(BASIC::M6d& HTVH, BASIC::V6d& HTVr, const BASIC::SE3& current_pose);
+
   using StateFn = void (SuperLIO::*)();
   using OctVoxMapType = OctVoxMap<BASIC::V3, BASIC::scalar>;
   using KNNHeapType = KNNHeap<5, BASIC::V3>;
@@ -142,6 +147,17 @@ protected:
 
   // Cache for caceData reuse (avoid duplicate transformPointCloud)
   BASIC::CloudPtr last_transformed_world_pc_;
+
+  // Degeneracy detection and constant velocity model
+  struct VelocityRecord {
+    double timestamp;
+    BASIC::V3 linear_velocity;
+    BASIC::V3 angular_velocity;
+  };
+  std::deque<VelocityRecord> velocity_history_;
+  bool is_degenerate_ = false;
+  BASIC::V3 predicted_velocity_ = BASIC::V3::Zero();
+  BASIC::V3 predicted_angular_velocity_ = BASIC::V3::Zero();
 };
 
 } // namespace END.

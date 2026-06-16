@@ -1237,8 +1237,25 @@ void SuperLIO::Observe(){
     HTVH = sum_HTVH.cast<scalar>();
     HTVr = sum_HTVr.cast<scalar>();
 
+    // 退化检测
+    M6d HTVH_double = sum_HTVH.cast<double>();
+    is_degenerate_ = checkDegeneracy(HTVH_double);
+    
+    // 如果检测到退化，添加常速模型约束
+    if (is_degenerate_ && g_constant_velocity_model_enable) {
+      updateVelocityHistory();
+      addConstantVelocityConstraint(HTVH_double, sum_HTVr, pose);
+      HTVH = HTVH_double.cast<scalar>();
+      HTVr = sum_HTVr.cast<scalar>();
+    }
+
     iter_num++;
   });
+
+  // 更新速度历史（即使没有退化也更新，为下次退化做准备）
+  if (g_constant_velocity_model_enable && !is_degenerate_) {
+    updateVelocityHistory();
+  }
 
   frame_num_++;
 }
@@ -1457,4 +1474,118 @@ void SuperLIO::resetIMUIntegration(){
   }
 }
 
+/// 退化检测：通过分析Hessian矩阵的特征值判断系统是否退化
+bool SuperLIO::checkDegeneracy(const BASIC::M6d& H_matrix) {
+  if (!g_degeneracy_detection_enable) {
+    return false;
+  }
+
+  // 计算Hessian矩阵的特征值
+  Eigen::SelfAdjointEigenSolver<BASIC::M6d> eigen_solver(H_matrix);
+  if (eigen_solver.info() != Eigen::Success) {
+    LOG(WARNING) << RED << " ---> [Degeneracy] Failed to compute eigenvalues" << RESET;
+    return false;
+  }
+
+  BASIC::V6d eigenvalues = eigen_solver.eigenvalues();
+  
+  // 找到最小特征值
+  double min_eigenvalue = eigenvalues.minCoeff();
+  
+  // 判断是否退化
+  bool is_degenerate = min_eigenvalue < g_degeneracy_threshold;
+  LOG(INFO) << YELLOW << " ---> [Degeneracy] Min eigenvalue: " << min_eigenvalue << " < threshold: " << g_degeneracy_threshold << RESET;
+
+  if (is_degenerate) {
+    LOG(WARNING) << YELLOW << " ---> [Degeneracy] System is degenerate! Min eigenvalue: " 
+                 << min_eigenvalue << " < threshold: " << g_degeneracy_threshold << RESET;
+    LOG(WARNING) << YELLOW << " ---> [Degeneracy] Eigenvalues: [" 
+                 << eigenvalues.transpose() << "]" << RESET;
+  }
+  
+  return is_degenerate;
+}
+
+/// 更新速度历史记录
+void SuperLIO::updateVelocityHistory() {
+  if (!g_constant_velocity_model_enable) {
+    return;
+  }
+
+  auto current_state = kf_->GetNavState();
+  double current_time = current_state.timestamp;
+  
+  // 计算当前速度（线速度和角速度）
+  BASIC::V3 linear_velocity = current_state.v;
+  BASIC::V3 angular_velocity = current_state.R.R_ * (kf_->GetSysState().bg); // 近似角速度
+  
+  // 添加到历史记录
+  VelocityRecord record;
+  record.timestamp = current_time;
+  record.linear_velocity = linear_velocity;
+  record.angular_velocity = angular_velocity;
+  
+  velocity_history_.push_back(record);
+  
+  // 移除过期的记录
+  double window_duration = g_velocity_history_window;
+  while (!velocity_history_.empty() && 
+         (current_time - velocity_history_.front().timestamp) > window_duration) {
+    velocity_history_.pop_front();
+  }
+  
+  // 计算预测速度（历史平均值）
+  if (!velocity_history_.empty()) {
+    BASIC::V3 sum_linear = BASIC::V3::Zero();
+    BASIC::V3 sum_angular = BASIC::V3::Zero();
+    
+    for (const auto& rec : velocity_history_) {
+      sum_linear += rec.linear_velocity;
+      sum_angular += rec.angular_velocity;
+    }
+    
+    predicted_velocity_ = sum_linear / velocity_history_.size();
+    predicted_angular_velocity_ = sum_angular / velocity_history_.size();
+  }
+}
+
+/// 添加常速模型约束
+/// 添加常速模型约束（修正版）
+void SuperLIO::addConstantVelocityConstraint(BASIC::M6d& HTVH, BASIC::V6d& HTVr, 
+                                              const BASIC::SE3& current_pose) {
+  if (!g_constant_velocity_model_enable || velocity_history_.empty()) {
+    return;
+  }
+  
+  // 1. 获取当前状态（世界系下的速度）
+  auto current_state = kf_->GetNavState();
+  BASIC::V3d current_linear_velocity = current_state.v.cast<double>();
+  BASIC::V3d pred_v = predicted_velocity_.cast<double>();
+  
+  // 世界系下的速度残差
+  BASIC::V3d velocity_residual = pred_v - current_linear_velocity;
+  
+  // 2. 正确计算世界系速度对旋转的雅可比 (3x3)
+  // dv/d_theta = -[v_world]x
+  BASIC::M3d v_world_skew;
+  v_world_skew << 0, -current_linear_velocity(2), current_linear_velocity(1),
+                  current_linear_velocity(2), 0, -current_linear_velocity(0),
+                 -current_linear_velocity(1), current_linear_velocity(0), 0;
+                 
+  BASIC::M3d J_r = -v_world_skew; // 速度对旋转的导数
+  
+  // 3. 构建 3x6 的雅可比矩阵（因为观测是3维速度，当前优化变量是6维位姿[delta_theta, delta_p]）
+  Eigen::Matrix<double, 3, 6> J_pose = Eigen::Matrix<double, 3, 6>::Zero();
+  J_pose.block<3, 3>(0, 0) = J_r;  // 仅约束旋转
+  J_pose.block<3, 3>(0, 3) = BASIC::M3d::Zero(); // 速度对位置的导数严格为 0！
+
+  // 4. 将约束叠加到 6x6 的位姿 Hessian 系统中
+  double weight = g_constant_velocity_weight;
+  
+  // 对应的 Hessian 增量：J^T * W * J
+  HTVH += weight * J_pose.transpose() * J_pose;
+  // 对应的 残差 增量：J^T * W * r
+  HTVr += weight * J_pose.transpose() * velocity_residual;
+  
+  LOG(INFO) << GREEN << " ---> [ConstantVelocity] Successfully added geometry-consistent constraint." << RESET;
 } // namespace END.

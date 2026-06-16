@@ -877,8 +877,8 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
     // For retained columns (every g_full_column_interval), emit all channels;
     // for other columns, only emit points matching filter_rate.
     size_t num_cols = num_points / g_lidar_channels;
-    size_t col_idx = g_filter_offset / g_lidar_channels;
-    size_t in_col_offset = g_filter_offset % g_lidar_channels;
+    size_t col_idx = 0;
+    size_t in_col_offset = 0;
     for (; col_idx < num_cols; ++col_idx) {
       size_t col_start = col_idx * g_lidar_channels;
       if (col_idx % (size_t)g_full_column_interval == 0) {

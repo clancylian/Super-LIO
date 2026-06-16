@@ -337,9 +337,9 @@ bool SuperLIO::kf_init(){
 
   M3 R_yaw_inv = Eigen::AngleAxis<scalar>(-yaw, V3::UnitZ()).toRotationMatrix(); 
 
-  // init_rot represents the IMU orientation after gravity alignment (level orientation).
-  // Perform LiDAR leveling correction, then transform the orientation into the robot frame.
-  M3 rot = g_lidar_robo_yaw * R_yaw_inv * init_rot;  
+  // Gravity-aligned initial orientation (pure imu/lidar → world, no odom_robo offset).
+  // odom_robo only affects robot odom output (lio/robo/odom), not imu frame.
+  M3 rot = R_yaw_inv * init_rot;
 
   ESKF::Options options;
   options.gyro_var_ = g_imu_ng;
@@ -353,7 +353,7 @@ bool SuperLIO::kf_init(){
   kf_->SetInitialConditions(options, mean_gyro, V3::Zero(), imu_scale, ref_gravity);
   auto state = kf_->GetSysState();
   state.R = SO3(rot);
-  state.p = g_odom_robo.t_;        // By default, the robot frame is used as the reference origin.
+  state.p = V3::Zero();             // World origin at initial imu/lidar position.
   state.timestamp = measures_.imu.back().secs;
   kf_->SetX(state);
   sys_init_pose_ = kf_->GetSE3();

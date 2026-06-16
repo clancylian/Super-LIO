@@ -639,8 +639,8 @@ void ROSWrapper::imuHandler(const sensor_msgs::msg::Imu::SharedPtr msg){
       odom_robo.pose.pose.orientation.w = q.w();
     }
 
-    odom_imu.header.stamp = this->now();
-    odom_robo.header.stamp = this->now();
+    odom_imu.header.stamp = toRosTime(data.secs);
+    odom_robo.header.stamp = toRosTime(data.secs);
     odom_imu.header.frame_id = g_world_frame;
     odom_imu.child_frame_id = g_imu_frame;
     odom_robo.header.frame_id = g_world_frame;
@@ -653,7 +653,7 @@ void ROSWrapper::imuHandler(const sensor_msgs::msg::Imu::SharedPtr msg){
       geometry_msgs::msg::TransformStamped tf_msg;
 
       // world -> imu
-      tf_msg.header.stamp = this->now();
+      tf_msg.header.stamp = toRosTime(data.secs);
       tf_msg.header.frame_id = g_world_frame;
       tf_msg.child_frame_id = g_imu_frame;
       tf_msg.transform.translation.x = imu_state.p(0);
@@ -670,7 +670,7 @@ void ROSWrapper::imuHandler(const sensor_msgs::msg::Imu::SharedPtr msg){
       // world -> base_footprint
       if (g_footprint_pub_en) {
         geometry_msgs::msg::TransformStamped tf_footprint;
-        tf_footprint.header.stamp = this->now();
+        tf_footprint.header.stamp = toRosTime(data.secs);
         tf_footprint.header.frame_id = g_world_frame;
         tf_footprint.child_frame_id = g_tf_base_footprint_frame;
 

@@ -1019,14 +1019,23 @@ void SuperLIO::Propagation_Undistort(){
     ic.time_end = s1.time;
   }
 
+  // 预提取 offset_time 到连续数组，改善 cache 局部性
+  // （AOS 布局下 offset_time 与 x/y/z 交错，遍历时 cache 命中率差）
+  const double back_time = propagate_states_.back().time;
+  std::vector<double> offset_times(ptsize);
+  for (size_t i = 0; i < ptsize; ++i) {
+    offset_times[i] = start_time + raw_pc->points[i].offset_time;
+  }
+
   size_t j = 0; // cached interval index
 
   for (size_t idx = 0; idx < ptsize; ++idx) {
     auto& pt_full = scan_undistort_full_->points[idx];
     const auto& pt = raw_pc->points[idx];
     pt_full.intensity = pt.intensity;
-    double query_time = start_time + pt.offset_time;
-    if (query_time > propagate_states_.back().time) {
+
+    double query_time = offset_times[idx];
+    if (query_time > back_time) {
       pt_full.x = pt.x;
       pt_full.y = pt.y;
       pt_full.z = pt.z;
@@ -1037,19 +1046,28 @@ void SuperLIO::Propagation_Undistort(){
     while (j + 1 < M - 1 && interval_cache[j + 1].time_start < query_time) ++j;
 
     const auto& ic = interval_cache[j];
-    double tau = query_time - ic.time_start;
+    const double tau = query_time - ic.time_start;
 
-    V3 raw(pt.x, pt.y, pt.z);
-    // result = R_end_inv_R_h * raw + R_end_inv_R_h * (omega_body * tau × raw)
-    //        + t_base + v_base * tau + acc_base * tau^2
-    V3 Rrot_raw = ic.R_end_inv_R_h * raw;
-    V3 omega_cross_raw = ic.omega_body.cross(raw) * tau;
-    V3 eigen_point = Rrot_raw + ic.R_end_inv_R_h * omega_cross_raw
-                   + ic.t_base + ic.v_base * tau + ic.acc_base * tau * tau;
-
-    pt_full.x = eigen_point[0];
-    pt_full.y = eigen_point[1];
-    pt_full.z = eigen_point[2];
+    // 标量展开，合并两次 3x3×3x1 为一次：
+    //   R*(raw + omega×raw*tau) + t_base + v_base*tau + acc_base*tau²
+    // 等价于 R*raw + R*(omega×raw*tau) + ...，但少一次矩阵向量乘
+    const float px = pt.x, py = pt.y, pz = pt.z;
+    const float ox = ic.omega_body[0], oy = ic.omega_body[1], oz = ic.omega_body[2];
+    // raw + omega×raw*tau  （小角度 Exp: I + hat(omega*tau) 作用于 raw）
+    const float mx = px + (oy*pz - oz*py) * tau;
+    const float my = py + (oz*px - ox*pz) * tau;
+    const float mz = pz + (ox*py - oy*px) * tau;
+    // R_end_inv_R_h * m  （单次 3x3×3x1）
+    const M3& R = ic.R_end_inv_R_h;
+    const float rx = R(0,0)*mx + R(0,1)*my + R(0,2)*mz;
+    const float ry = R(1,0)*mx + R(1,1)*my + R(1,2)*mz;
+    const float rz = R(2,0)*mx + R(2,1)*my + R(2,2)*mz;
+    // + t_base + v_base*tau + acc_base*tau²
+    const float tau_f = tau;
+    const float tau2_f = tau * tau;
+    pt_full.x = rx + ic.t_base[0] + ic.v_base[0]*tau_f + ic.acc_base[0]*tau2_f;
+    pt_full.y = ry + ic.t_base[1] + ic.v_base[1]*tau_f + ic.acc_base[1]*tau2_f;
+    pt_full.z = rz + ic.t_base[2] + ic.v_base[2]*tau_f + ic.acc_base[2]*tau2_f;
   }
 }
 

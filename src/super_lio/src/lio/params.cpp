@@ -129,7 +129,14 @@ namespace LI2Sup{
   bool  g_degeneracy_detection_enable = true;     // 启用退化检测
   double g_degeneracy_threshold = 10.0;          // 退化检测阈值（最小特征值）
   bool  g_constant_velocity_model_enable = true; // 启用常速模型约束
-  double g_constant_velocity_weight = 10.0;    // 常速模型约束权重
+  double g_constant_velocity_weight = 1000.0;    // 常速模型约束权重
   int    g_velocity_history_window = 1;          // 速度历史窗口大小（秒）
+
+  /// DRPM (Degeneracy Resilient Point-to-Plane Error Minimization)
+  bool  g_drpm_enable = true;                    // 启用DRPM退化检测
+  double g_drpm_snr_factor = 10.0;               // DRPM信噪比因子
+  double g_drpm_normal_stdev = 0.1;              // 法向量标准差
+  double g_drpm_point_stdev = 0.05;              // 点云标准差
+  double g_drpm_probability_threshold = 0.5;    // 非退化概率阈值
 
 }

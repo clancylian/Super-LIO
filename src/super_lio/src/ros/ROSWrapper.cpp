@@ -391,6 +391,33 @@ void LoadParamFromRos(rclcpp::Node& node)
   LOG(INFO) << GREEN << " ---> [Param] velocity_history_window: "
             << g_velocity_history_window << RESET;
 
+  // ================= DRPM (Degeneracy Resilient Point-to-Plane Error Minimization) =================
+  node.declare_parameter<bool>("lio.sensor.drpm_enable", true);
+  node.get_parameter("lio.sensor.drpm_enable", g_drpm_enable);
+
+  node.declare_parameter<double>("lio.sensor.drpm_snr_factor", 10.0);
+  node.get_parameter("lio.sensor.drpm_snr_factor", g_drpm_snr_factor);
+
+  node.declare_parameter<double>("lio.sensor.drpm_normal_stdev", 0.1);
+  node.get_parameter("lio.sensor.drpm_normal_stdev", g_drpm_normal_stdev);
+
+  node.declare_parameter<double>("lio.sensor.drpm_point_stdev", 0.05);
+  node.get_parameter("lio.sensor.drpm_point_stdev", g_drpm_point_stdev);
+
+  node.declare_parameter<double>("lio.sensor.drpm_probability_threshold", 0.5);
+  node.get_parameter("lio.sensor.drpm_probability_threshold", g_drpm_probability_threshold);
+
+  LOG(INFO) << GREEN << " ---> [Param] drpm_enable: "
+            << (g_drpm_enable ? "true" : "false") << RESET;
+  LOG(INFO) << GREEN << " ---> [Param] drpm_snr_factor: "
+            << g_drpm_snr_factor << RESET;
+  LOG(INFO) << GREEN << " ---> [Param] drpm_normal_stdev: "
+            << g_drpm_normal_stdev << RESET;
+  LOG(INFO) << GREEN << " ---> [Param] drpm_point_stdev: "
+            << g_drpm_point_stdev << RESET;
+  LOG(INFO) << GREEN << " ---> [Param] drpm_probability_threshold: "
+            << g_drpm_probability_threshold << RESET;
+
   // ================= lio only undistort mode =================
   node.declare_parameter<bool>("lio.lio_only_undistort", false);
   node.get_parameter("lio.lio_only_undistort", g_lio_only_undistort);

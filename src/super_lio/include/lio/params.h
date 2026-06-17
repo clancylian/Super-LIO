@@ -164,6 +164,13 @@ namespace LI2Sup{
   extern double g_constant_velocity_weight;      // 常速模型约束权重
   extern int    g_velocity_history_window;       // 速度历史窗口大小（秒）
 
+  /// DRPM (Degeneracy Resilient Point-to-Plane Error Minimization)
+  extern bool  g_drpm_enable;                    // 启用DRPM退化检测
+  extern double g_drpm_snr_factor;               // DRPM信噪比因子
+  extern double g_drpm_normal_stdev;             // 法向量标准差
+  extern double g_drpm_point_stdev;              // 点云标准差
+  extern double g_drpm_probability_threshold;    // 非退化概率阈值
+
 }
 
 #endif

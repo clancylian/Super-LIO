@@ -91,6 +91,27 @@ protected:
   bool checkDegeneracy(const BASIC::M6d& H_matrix);
   void updateVelocityHistory();
   void addConstantVelocityConstraint(BASIC::M6d& HTVH, BASIC::V6d& HTVr, const BASIC::SE3& current_pose);
+  
+  // DRPM (Degeneracy Resilient Point-to-Plane Error Minimization)
+  // Detection runs in the body (LiDAR) frame: points and normals must be expressed there,
+  // and H_body must be the body-frame Hessian (= T^T * HTVH * T with T = diag(I, R)).
+  // On success it also returns the eigen-decomposition and per-direction non-degeneracy
+  // probabilities so the constraint step can reuse them (no second eigensolve / noise pass).
+  bool checkDRPMDegeneracy(const std::vector<BASIC::V3>& points_body,
+                           const std::vector<BASIC::V3>& normals_body,
+                           const std::vector<double>& weights,
+                           const BASIC::M6d& H_body,
+                           BASIC::V6d& eigenvalues_out,
+                           BASIC::M6d& eigenvectors_out,
+                           BASIC::V6d& probabilities_out);
+  // Down-weights the measurement information (both HTVH and HTVr) along degenerate
+  // directions so the IMU prior takes over. eigenvectors_body are body-frame; R maps
+  // them back to the solver frame (rotation in body, translation in world).
+  void applyDRPMConstraints(BASIC::M6d& HTVH, BASIC::V6d& HTVr,
+                            const BASIC::V6d& eigenvalues,
+                            const BASIC::M6d& eigenvectors_body,
+                            const BASIC::V6d& probabilities,
+                            const BASIC::M3d& R);
 
   using StateFn = void (SuperLIO::*)();
   using OctVoxMapType = OctVoxMap<BASIC::V3, BASIC::scalar>;

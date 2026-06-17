@@ -1,5 +1,6 @@
 
 #include "lio/super_lio.h"
+#include "lio/degeneracy.h"
 
 #include <sys/resource.h>
 #include <sched.h>
@@ -1238,16 +1239,77 @@ void SuperLIO::Observe(){
     HTVH = sum_HTVH.cast<scalar>();
     HTVr = sum_HTVr.cast<scalar>();
 
-    // 退化检测
-    M6d HTVH_double = sum_HTVH.cast<double>();
-    is_degenerate_ = checkDegeneracy(HTVH_double);
-    
-    // 如果检测到退化，添加常速模型约束
-    if (is_degenerate_ && g_constant_velocity_model_enable) {
-      updateVelocityHistory();
-      addConstantVelocityConstraint(HTVH_double, sum_HTVr, pose);
-      HTVH = HTVH_double.cast<scalar>();
-      HTVr = sum_HTVr.cast<scalar>();
+    // ===== 退化处理：DRPM（优先）或传统最小特征值阈值 =====
+    M6d HTVH_double = sum_HTVH;  // sum_HTVH 本就是 double
+
+    if (g_drpm_enable) {
+      // 收集真正参与 HTVH 的点（与上面累加的条件一致）。
+      // DRPM 要求点和法向量在同一坐标系，这里统一用 body(LiDAR) 系。
+      std::vector<BASIC::V3> drpm_points;
+      std::vector<BASIC::V3> drpm_normals;
+      std::vector<double>    drpm_weights;
+      drpm_points.reserve(effect_knn_num_);
+      drpm_normals.reserve(effect_knn_num_);
+      drpm_weights.reserve(effect_knn_num_);
+
+      for (size_t r_s = 0; r_s < effect_knn_num_; ++r_s) {
+        int idx = effect_knn_idxs_[r_s];
+        if (!effect_mask_[idx]) continue;
+
+        auto& abcd = abcd_vec_[idx];
+        V3d normvec(abcd[0], abcd[1], abcd[2]);  // world 系平面法向量
+        V3d nb = R_transpose * normvec;          // 转到 body 系，与 Jacobian 旋转块一致
+
+        drpm_points.push_back(points_body_v3_[idx]);
+        drpm_normals.push_back(nb.cast<scalar>());
+        drpm_weights.push_back(1000.0);          // 与点面匹配相同的权重
+      }
+
+      // 求解器 Jacobian 为混合坐标系 J=[p_body×nb ; n_world]，而 n_world=R*nb，
+      // 故 J = T*v_body（T=diag(I,R)），于是 body 系检测 Hessian H_body = T^T*HTVH*T，
+      // 与求解器 Hessian 精确等价，且与上面的 body 系噪声模型同基。
+      const M3d R = R_transpose.transpose();
+      M6d T = M6d::Identity();
+      T.bottomRightCorner<3, 3>() = R;
+      const M6d H_body = T.transpose() * HTVH_double * T;
+
+      // 单次检测：同时输出特征分解与概率，供约束步复用（不再二次计算）。
+      V6d eigenvalues, probabilities;
+      M6d eigenvectors;
+      is_degenerate_ = checkDRPMDegeneracy(drpm_points, drpm_normals, drpm_weights,
+                                           H_body, eigenvalues, eigenvectors, probabilities);
+                                      
+      LOG(INFO) << YELLOW << " ---> [SuperLIO]: DRPM degeneracy detected: Eigenvalues: " << eigenvalues 
+        << " Probabilities: " << probabilities << RESET;
+
+      if (is_degenerate_) {
+        LOG(INFO) << RED << " ---> [SuperLIO]: DRPM degeneracy detected: Eigenvalues: " << eigenvalues 
+        << " Probabilities: " << probabilities << RESET;
+
+        // 沿退化方向同步压低 HTVH 与 HTVr，让 IMU 先验接管该方向。
+        // applyDRPMConstraints(HTVH_double, sum_HTVr, eigenvalues, eigenvectors, probabilities, R);
+        // HTVH = HTVH_double.cast<scalar>();
+        // HTVr = sum_HTVr.cast<scalar>();
+
+        // // 若同时启用常速模型，叠加常速约束
+        // if (g_constant_velocity_model_enable) {
+        //   updateVelocityHistory();
+        //   addConstantVelocityConstraint(HTVH_double, sum_HTVr, pose);
+        //   HTVH = HTVH_double.cast<scalar>();
+        //   HTVr = sum_HTVr.cast<scalar>();
+        // }
+      }
+    } else {
+      // 传统退化检测方法（最小特征值阈值）
+      is_degenerate_ = checkDegeneracy(HTVH_double);
+
+      // 如果检测到退化，添加常速模型约束
+      if (is_degenerate_ && g_constant_velocity_model_enable) {
+        updateVelocityHistory();
+        addConstantVelocityConstraint(HTVH_double, sum_HTVr, pose);
+        HTVH = HTVH_double.cast<scalar>();
+        HTVr = sum_HTVr.cast<scalar>();
+      }
     }
 
     iter_num++;
@@ -1526,9 +1588,10 @@ void SuperLIO::updateVelocityHistory() {
   auto current_state = kf_->GetNavState();
   double current_time = current_state.timestamp;
   
-  // 计算当前速度（线速度和角速度）
+  // 获取当前速度（线速度和角速度）
   BASIC::V3 linear_velocity = current_state.v;
-  BASIC::V3 angular_velocity = current_state.R.R_ * (kf_->GetSysState().bg); // 近似角速度
+  // 从 ESKF 获取正确的 body 系角速度（成员名为 w）
+  BASIC::V3 angular_velocity = kf_->GetDynamicState().w;
   
   // 添加到历史记录
   VelocityRecord record;
@@ -1599,6 +1662,105 @@ void SuperLIO::addConstantVelocityConstraint(BASIC::M6d& HTVH, BASIC::V6d& HTVr,
   HTVr += weight * J_pose.transpose() * velocity_residual;
   
   LOG(INFO) << GREEN << " ---> [ConstantVelocity] Successfully added geometry-consistent constraint." << RESET;
+}
+
+/// DRPM 退化检测：在 body 系做单次特征分解 + 噪声估计，输出概率供约束步复用。
+/// points_body / normals_body 必须在同一(body)坐标系；H_body 为该系下的检测 Hessian。
+bool SuperLIO::checkDRPMDegeneracy(const std::vector<BASIC::V3>& points_body,
+                                   const std::vector<BASIC::V3>& normals_body,
+                                   const std::vector<double>& weights,
+                                   const BASIC::M6d& H_body,
+                                   BASIC::V6d& eigenvalues_out,
+                                   BASIC::M6d& eigenvectors_out,
+                                   BASIC::V6d& probabilities_out) {
+  if (!g_drpm_enable || points_body.empty() || normals_body.empty() || weights.empty()) {
+    return false;
+  }
+
+  try {
+    Eigen::SelfAdjointEigenSolver<BASIC::M6d> eigensolver(H_body);
+    if (eigensolver.info() != Eigen::Success) {
+      LOG(WARNING) << RED << " ---> [DRPM] Failed to compute eigenvalues" << RESET;
+      return false;
+    }
+    eigenvectors_out = eigensolver.eigenvectors();
+    eigenvalues_out  = eigensolver.eigenvalues();
+
+    // 各向同性法向量协方差（与参考实现默认用法一致）
+    degeneracy::VectorVector3<double> drpm_points;
+    degeneracy::VectorVector3<double> drpm_normals;
+    std::vector<double> drpm_weights;
+    degeneracy::VectorMatrix3<double> normal_covariances;
+    const size_t n = points_body.size();
+    drpm_points.reserve(n);
+    drpm_normals.reserve(n);
+    drpm_weights.reserve(n);
+    normal_covariances.reserve(n);
+    for (size_t i = 0; i < n; ++i) {
+      drpm_points.push_back(points_body[i].cast<double>());
+      drpm_normals.push_back(normals_body[i].cast<double>());
+      drpm_weights.push_back(weights[i]);
+      normal_covariances.push_back(BASIC::M3d::Identity() * std::pow(g_drpm_normal_stdev, 2));
+    }
+
+    BASIC::M6d noise_mean;
+    BASIC::V6d noise_variance;
+    std::tie(noise_mean, noise_variance) = degeneracy::ComputeNoiseEstimate<double, double>(
+        drpm_points, drpm_normals, drpm_weights, normal_covariances, eigenvectors_out, g_drpm_point_stdev);
+
+    probabilities_out = degeneracy::ComputeSignalToNoiseProbabilities<double>(
+        H_body, noise_mean, noise_variance, eigenvectors_out, g_drpm_snr_factor);
+
+    bool is_degenerate = false;
+    for (int i = 0; i < 6; ++i) {
+      if (probabilities_out[i] < g_drpm_probability_threshold) {
+        is_degenerate = true;
+        LOG(WARNING) << YELLOW << " ---> [DRPM] Degenerate direction " << i
+                     << " | eigenvalue: " << eigenvalues_out[i]
+                     << " | probability: " << probabilities_out[i] << RESET;
+      }
+    }
+
+    if (is_degenerate) {
+      LOG(INFO) << GREEN << " ---> [DRPM] Non-degeneracy probabilities: ["
+                << probabilities_out.transpose() << "]" << RESET;
+    }
+
+    return is_degenerate;
+
+  } catch (const std::exception& e) {
+    LOG(WARNING) << RED << " ---> [DRPM] Exception in degeneracy detection: " << e.what() << RESET;
+    return false;
+  }
+}
+
+/// 应用 DRPM 约束：沿退化方向同步压低 HTVH 与 HTVr 的测量信息，让 IMU 先验接管该方向。
+/// eigenvectors_body 为 body 系特征向量；R 经 T=diag(I,R) 映射回求解器系。
+void SuperLIO::applyDRPMConstraints(BASIC::M6d& HTVH, BASIC::V6d& HTVr,
+                                    const BASIC::V6d& eigenvalues,
+                                    const BASIC::M6d& eigenvectors_body,
+                                    const BASIC::V6d& probabilities,
+                                    const BASIC::M3d& R) {
+  if (!g_drpm_enable) {
+    return;
+  }
+
+  // 将 body 系特征向量映射到求解器系：U_s = T * U_body，T = diag(I, R)。
+  // 旋转块在 body 系不变，平移块需左乘 R 转到 world 系。
+  BASIC::M6d U = eigenvectors_body;
+  U.bottomRows<3>() = R * eigenvectors_body.bottomRows<3>();
+
+  // 非退化概率作为各方向 [0,1] 的置信度。
+  const BASIC::V6d p = probabilities.cwiseMax(0.0).cwiseMin(1.0);
+
+  // 一致地缩放测量信息：HTVH <- U diag(p.*λ) U^T，HTVr <- U diag(p) U^T HTVr。
+  // p→1 该方向保持不变；p→0 该方向交给 IMU 先验。
+  const BASIC::V6d scaled = eigenvalues.cwiseProduct(p).cwiseMax(0.0);
+  HTVH = U * scaled.asDiagonal() * U.transpose();
+  HTVr = U * p.asDiagonal() * U.transpose() * HTVr;
+
+  LOG(INFO) << GREEN << " ---> [DRPM] Applied probability-weighted constraints | p: ["
+            << p.transpose() << "]" << RESET;
 }
 
 } // namespace END.

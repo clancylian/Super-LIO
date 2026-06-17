@@ -36,6 +36,14 @@ class Timer {
     }
   }
 
+  void Record(const std::string& func_name, double time_usage_ms) {
+    if (records_.find(func_name) != records_.end()) {
+      records_[func_name].time_usage_in_ms_.emplace_back(time_usage_ms);
+    } else {
+      records_.insert({func_name, TimerRecord(func_name, time_usage_ms)});
+    }
+  }
+
   void PrintAll() {
     LOG(INFO) << ">>> ===== Printing run time =====";
     for (const auto& r : records_) {
